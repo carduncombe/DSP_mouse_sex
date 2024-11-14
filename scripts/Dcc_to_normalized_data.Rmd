@@ -5,195 +5,21 @@ date: "2024-08-07"
 output: html_document
 ---
 
-Goal of this script is to write a document for the downstream QC process
-
-## Technical signal 
-Read threshold
-Want segments with less than 1000 raw reads
-
-Aligned reads
-80% raw read aligned
-*If failed this nto great. Omit from analysis. 
-
-Sequnecing Saturation - qdequately sequenced the library. Not confident you have captured. Might indicate you have seqeunced it enough. 
-50%
-*if not passed, need to also omit. 
-
-Want to adjust the Nuclei Count
-Surface are et minumum to 1800
-
-## Technical signal 
-
-
-Stiched - %
-realted to the alignment of primers. 
-
-## We have done the QC on the samples.
-On the point and clide
-Omited 5, did not exclude by nuclei count. 
-
-
-# Biological Probe QC
-leave on the default parameters.
-Looks at if probes are consitent across ROIs. 
-All the probes passed. 
-
-Outcome- keeping all the probes in the dataset.
-
-Coudl be more stringent - but do not do.
-
-# segements = ROIS.
-Don't filter ROIs at this stage.
-
-# Step 3 - filter the target (genes) for each ROIs
-This would this be donw in R.
-High signal with low variablility.
-Ram recommends the keeping the targets that 5%. Remvoing the highest variability and dn lowest number. 
-Set to the Higher of LOQ and user defined value.
-
-We set to 2% which leaves the about 10,000 genes. 
-
-#Next step don't use the data normalization. 
-
-Nanostring recommend the Q3 normalization strategy. looking at 75th quartile.
-The low sized ones might be problemnation. Number of counts and the spread of them. 
-
-
-
-# there are 19963
-# you are not sequencing directly the RNA moelcule but sequecning the probe that was bound to the RNA molecule. 
-
-
-# Now try to do this:
-
-What we got:
-* DCC files - Scott groups do seqeuncing and then they processing and created a DCC file for us. Input fastq and output DCC. 
-* PKC file - from nanostring - connects probe ID to a target gene.
-* fastq files - get from Scott Kennedy - do it now rather than forget. 
-* High resolution image of the GeoMX images. 
-* library readout - information sent on libraries to Scott Kennedy.
-* a version of normalization. 
-
-# Theo Bammler
-
-Referred by Ram.
-They do end-to-end analysis. 
-3000 - 5000 - For end to end analysis. 
-There might be better methods for normalization. 
-
-
+Goal:
+Create GeoMX Seurat object and perform DE analysis
+# Load in and normalize data
 ```{r load the libraies }
-
-```
-
-```{r Load the datafile}
-download_directory <- here::here('raw_data/dcc_files')
-
-for (directory in list.dirs(download_directory)){
-
-  if (grepl("results", directory)){
-    message(paste0("Reading data from ", directory))
-    #Extract the plate ID (A1, A2, B1, B2, ...)
-    plate_ID <- unlist(strsplit(directory, "/"))[11]
-    # Grab the first letter of the plate ID (this is the index that the GeoMx exports and labels the data with)
-    plate_abbreviation <- unlist(strsplit(plate_ID, "*"))[[1]]
-    # Point the readNanoStringGeoMxSet function to the directory containing DCC files from this plate.
-    dccFiles <- dir(directory,
-                    pattern = paste0(plate_abbreviation,"-\\w*.dcc$"),
-                    full.names = T)
-    # Point to the pkc file (kind of like a reference atlas for nanostring).
-    pkcFile <-  "./NanoString_Files/Hs_R_NGS_WTA_v1.0.pkc"
-    # Point to the annotation file (metadata for the samples)
-    annotationFile <- "./Metadata/Template for DSP metadata_071624_SG.xlsx"
-    myData <- suppressWarnings(readNanoStringGeoMxSet(dccFiles = dccFiles,
-                                              pkcFiles = pkcFile,
-                                              phenoDataFile = annotationFile,
-                                              phenoDataSheet = "Master",
-                                             #this is the excel sheet’s name
-                                              phenoDataDccColName = "Sample_ID",
-                                             #these are headers/column names in the excel file
-                                              protocolDataColNames = c("ROI Name",
-                                                                       "Area",
-                                                                       "Nuclei",
-                                                                       "Structure ID"
-                                              )))
-    #aggregate counts (for the WTA, this just aggregates negative probes)
-    target_myData <- aggregateCounts(myData)
-    # the data won't export unless a normalization method is run, but I only want the raw data.
-    target_myData <- normalize(target_myData , norm_method="hk", fromElt="exprs", toElt="hk_norm")
-    #export the raw data to a seurat object.
-    seuratObj.tmp <- GeomxTools::as.Seurat(target_myData, normData = "exprs",forceRaw=T)
-    
-    #iteratively append the seurat objects to a merged "master" seurat object. (each seuratObj.tmp object is a single plate of 96 wells).
-    if (!exists("seuratObj.AllPlates")){
-      seuratObj. AllPlates <- seuratObj.tmp
-    } else {
-    seuratObj.AllPlates <- merge(seuratObj.AllPlates, seuratObj.tmp)
-    #fix the merged layers bug with Seurat
-          if (CellMembrane::HasSplitLayers(seuratObj.AllPlates)){
-        seuratObj.AllPlates <- CellMembrane::MergeSplitLayers(seuratObj.AllPlates)
-      }
-    }
-  }
-}
-
-#save seurat object
-
-saveRDS(seuratObj.All Plates, here::here('./Checkpoint_SeuratObjects/seuratObj.AllPlates.rds'))
-
-```
-
-```{r Load the datafile}
-
 library(here)
 library(GeomxTools)
 library(CellMembrane)
-
-download_directory <- here::here('raw_data/dcc_files/DCC-20240715')
-
-  # Point the readNanoStringGeoMxSet function to the directory containing DCC files from this plate
-dccFiles <- dir(download_directory, pattern = "\\w*.dcc$", full.names = TRUE)
-#dccFiles <- download_directory
-  
-  # Point to the pkc file (kind of like a reference atlas for nanostring)
-  pkcFile <- "raw_data/pkc/Mm_R_NGS_WTA_v1.0.pkc"
-  
-  # Point to the annotation file (metadata for the samples)
-  annotationFile <- "raw_data/meta_data/annotation_data (2).xlsx"
-  
-  myData <- suppressWarnings(readNanoStringGeoMxSet(dccFiles = dccFiles,
-                                                    pkcFiles = pkcFile,
-                                                    phenoDataFile = annotationFile,
-                                                    phenoDataSheet = "Master",
-                                                    # this is the excel sheet’s name
-                                                    phenoDataDccColName = "SAMPLE_ID",
-                                                    # these are headers/column names in the excel file
-                                                    protocolDataColNames = c("ROI_ID")
-                                                    ))
-  
-  # Aggregate counts (for the WTA, this just aggregates negative probes)
-  target_myData <- aggregateCounts(myData)
-  
-  # The data won't export unless a normalization method is run, but I only want the raw data
-  # Using for housekeeping genes. 
-  target_myData <- normalize(target_myData, norm_method = "hk", fromElt = "exprs", toElt = "hk_norm")
-  
-  # Export the raw data to a Seurat object
-  seuratObj.tmp <- GeomxTools::as.Seurat(target_myData, normData = "exprs", forceRaw = TRUE)
-  
-  
-  # playing with Seurat
-  
-  Seurat::GetAssayData(seuratObj.tmp, layer = "counts") # coudl add meta data to this. 
-  
-seuratObj.tmp@meta.data # this is our normal dataframte
-  
-
-
+library(DESeq2)
+library(Seurat)
+#load or download the 'usethis' package.
+pacman::p_load("usethis")
+pacman::p_load(BiocManager, devtools)
 ```
 
-
-```{r Load Cell Membrane}
+```{r Load Cell Membrane if necessary}
 if (! ("pacman" %in% installed.packages()[,"Package"])) {
   install.packages('pacman')
 }
@@ -216,15 +42,57 @@ devtools::install_github(repo = 'bimberlabinternal/cellmembrane', dependencies =
 
 ```
 
+```{r Load the datafile}
 
-```{r}
+download_directory <- here::here('raw_data/dcc_files/DCC-20240715')
 
-formula = 0 + Sex * Location # within infected
+# Point the readNanoStringGeoMxSet function to the directory containing DCC files from this plate
+dccFiles <- dir(download_directory, pattern = "\\w*.dcc$", full.names = TRUE)
+#dccFiles <- download_directory
+  
+  # Point to the pkc file (kind of like a reference atlas for nanostring)
+  pkcFile <- "raw_data/pkc/Mm_R_NGS_WTA_v1.0.pkc"
+  
+  # Point to the annotation file (metadata for the samples)
+  annotationFile <- "raw_data/meta_data/annotation_data (2).xlsx"
+  
+  myData <- suppressWarnings(readNanoStringGeoMxSet(dccFiles = dccFiles,
+                                                    pkcFiles = pkcFile,
+                                                    phenoDataFile = annotationFile,
+                                                    phenoDataSheet = "Master",
+                                                    # this is the excel sheet’s name
+                                                    phenoDataDccColName = "SAMPLE_ID",
+                                                    # these are headers/column names in the excel file
+                                                    protocolDataColNames = c("ROI_ID") # add columns about protocol/sequencing data here. 
+                                                    ))
+  
+  # Aggregate counts (for the WTA, this just aggregates negative probes)
+  target_myData <- aggregateCounts(myData)
+  
+  # The data won't export unless a normalization method is run, but I only want the raw data
+  # Using for housekeeping genes. 
+  target_myData <- normalize(target_myData, norm_method = "hk", fromElt = "exprs", toElt = "hk_norm")
+  
+  # Export the raw data to a Seurat object
+  seuratObj.tmp <- GeomxTools::as.Seurat(target_myData, normData = "exprs", forceRaw = TRUE)
+  
+  
+  # playing with Seurat
+  Seurat::GetAssayData(seuratObj.tmp, layer = "counts") # coudl add meta data to this. 
+  
+seuratObj.tmp@meta.data # this is our normal dataframte
+  
 ```
 
+```{r Normalize with CellMembrane and create Seurate object}
 
-```{r}
-library(Seurat)
+# Normalization with CellMemraben - there is the normalization process and there is not.
+# Fit a model hat is sensitive to the things that you want to take into account. 
+#This does a  library sized tranformation - transcript per million reads per library.
+# Tihs is only transcripts that got aligned. 
+# Seurat does per 100,000 log2 or log - see what seurat
+# This is just to run and see a rough PCA. 
+
 seuratObj.tmp <- CellMembrane::NormalizeAndScale(seuratObj.tmp, 
                                                        nVariableFeatures = 5000, 
                                                        scoreCellCycle = F)
@@ -251,10 +119,175 @@ seuratObj.tmp <- RunPCA(seuratObj.tmp)
   
 ```
 
-```{r}
+```{r Lookt at Seurate features for PCA plots}
 
 print(seuratObj.tmp@meta.data)
 
+pbmc_small <- CellMembrane::FindClustersAndDimRedux(seuratObj.tmp)
+
+Seurat::DimPlot(pbmc_small, group.by = 'Cyp4a12a')
+Seurat::FeaturePlot(pbmc_small, features = 'Cyp4a12a')
+
 
 ```
+
+# Next step: Preliminary evaluation of analysis models.
+
+Goal is to data harvesting to set up Deseq2.
+potential formulte: formula = 0 + Sex * Location # within infected
+
+```{r DE  with an intercept model - all variables}
+# need matrix and metadata:
+cts <- Seurat::GetAssayData(seuratObj.tmp, layer = "counts")
+coldata <- seuratObj.tmp@meta.data
+
+#Intercept one - always compared against female
+dds <- DESeqDataSetFromMatrix(countData = round(as.matrix(cts),0),
+                             colData = coldata,
+                             design= ~ 0 + Group + ROI_size + Liver_zone + Type)
+
+#0 + Group*Liver_zone # fiting these and getting volcano plots
+#0 + Liver_zone*Type # fiting these and getting volcano plots
+
+dds <- DESeq(dds)
+resultsNames(dds) # lists of comparions:
+#"Intercept"                  "Group_M_vs_F"               "Group_ORX_vs_F"             "ROI_size_200um_vs_100um"   
+ #[5] "ROI_size_50um_vs_100um"     "ROI_size_75um_vs_100um"     "Liver_zone_PC_vs_IZ"        "Liver_zone_PP_vs_IZ"       
+ #[9] "Type_mock_vs_bystander"     "Type_schizont_vs_bystander"
+
+```
+
+```{r DE without the intercept - all variables}
+
+dds2 <- DESeqDataSetFromMatrix(countData = round(as.matrix(cts),0),
+                             colData = coldata,
+                             design= ~ Group + ROI_size + Liver_zone + Type)
+ #[1] "GroupF"        "GroupM"        "GroupORX"      "ROI_size200um" "ROI_size50um"  "ROI_size75um"  "Liver_zonePC"  "Liver_zonePP"  "Typemock"      "Typeschizont" 
+
+dds2 <- DESeq(dds2)
+resultsNames(dds2) # lists the groups:
+
+```
+
+``` {r Running the comparisons}
+res2 <- results(dds2, name="Group_M_vs_F") 
+res2 <- lfcShrink(dds2, coef= c("Group_M_vs_F"), type="apeglm")
+
+
+res <- results(dds, name="GroupM") 
+# or to shrink log fold changes association with condition:
+res <- lfcShrink(dds, coef= c("GroupM"), type="apeglm")
+
+# look at it:
+res
+# Change versus global mean
+# Male versus female
+
+```
+
+Create volcano plots from some of the comparions
+
+Function to make volcano plots (pulled from GW code and altered from edgeR to DeSeq2)
+```{r Function to perform DE expression and volcano plot}
+#' @title PerformDifferentialExpression
+#'
+#' @description This is designed to perform DE using edgeR on a pseudobulked seurat object
+#' @param fit The glm fit object generated by PerformGlmFit
+#' @param contrast The contrast, passed directly to edgeR::glmQLFTest or edgeR::glmLRT
+#' @param contrast_name A name for the contrast
+#' @param logFC_threshold The min logFC
+#' @param FDR_threshold The min FDR to report
+#' @param test.use Can be either QLF or LRT. QLF runs edgeR::glmQLFTest, while LRT runs edgeR::glmLRT
+#' @param showPlots Boolean determining if the volcano plots and p value dsitributions should be shown. 
+#' @return A list with the differential_expression results, volcano ggplot object and pvalue_dist ggplot object
+#' @export
+#' 
+PerformDifferentialExpression <- function(dds, contrast_name, logFC_threshold = 1, FDR_threshold = 0.05, test.use = "Wald", showPlots = TRUE){
+
+  # Perform differential expression analysis for the given contrast
+  if (test.use == "Wald"){
+    fit_test <- DESeq2::results(dds, name = contrast_name)
+  } else if (test.use == "LRT"){
+    fit_test <- DESeq2::results(dds, contrast = contrast_name, test = "LRT")
+  } else {
+    stop("Please supply a valid test.use argument.")
+  }
+
+  # Shrink log2 fold changes (optional, recommended for visualization)
+  fit_test <- DESeq2::lfcShrink(dds, coef = contrast_name, type = "apeglm")
+  
+  # Convert results to a data frame and add a 'gene' column
+  differential_expression <- as.data.frame(fit_test)
+  differential_expression$gene <- rownames(differential_expression)
+  
+  # Create volcano plot
+  volcano <- ggplot(differential_expression, aes(x = log2FoldChange, y = -log10(padj), label = gene)) +
+    # Plot the upregulated genes using log2FoldChange cutoff and padj cutoff
+    geom_point(data = differential_expression[differential_expression$log2FoldChange >= logFC_threshold &
+                                              differential_expression$padj <= FDR_threshold,], color = "orange") +
+    # Plot the downregulated genes
+    geom_point(data = differential_expression[differential_expression$log2FoldChange <= -logFC_threshold &
+                                              differential_expression$padj <= FDR_threshold,], color = "cadetblue2") +
+    # Repel labels for the up- and down-regulated genes
+    ggrepel::geom_text_repel(data = differential_expression[
+      (differential_expression$log2FoldChange >= logFC_threshold & differential_expression$padj < FDR_threshold) |
+        (differential_expression$log2FoldChange <= -logFC_threshold & differential_expression$padj < FDR_threshold),],
+      max.overlaps = 10) +
+    # Plot the rest of the genes
+    geom_point(data = differential_expression[(differential_expression$log2FoldChange > -logFC_threshold &
+                                               differential_expression$log2FoldChange < logFC_threshold) |
+                                               differential_expression$padj > FDR_threshold,], color = "black") +
+    # Plot thresholds
+    geom_hline(yintercept = -log10(FDR_threshold), color = "red", linetype = "dashed") +
+    geom_vline(xintercept = logFC_threshold, color = "red", linetype = "dashed") +
+    geom_vline(xintercept = -logFC_threshold, color = "red", linetype = "dashed") +
+    egg::theme_article() +
+    ggtitle(contrast_name)
+  
+  # Create p-value distribution plot
+  pvalue_dist <- ggplot(differential_expression, aes(x = pvalue)) + 
+    geom_histogram() + 
+    ggtitle("PValue Distribution") + 
+    egg::theme_article()
+  
+  # Display plots if requested
+  if (showPlots) {
+    print(pvalue_dist)
+    print(volcano)
+  }
+  
+  # Return results
+  return(list(
+    differential_expression = differential_expression,
+    volcano = volcano,
+    pvalue_dist = pvalue_dist)
+  )
+}
+
+```
+
+```{r Create a Volcano plot with function}
+
+PerformDifferentialExpression(dds, "Typemock") # Add comparison of interest. 
+
+```
+
+Create volcano plots based on Deseq outcomes
+
+Follow GW McElfresh vignettes.
+
+https://bimberlabinternal.github.io/CellMembrane/articles/Pseudobulking-and-Filtered-Contrasts.html
+Pseudobulking-and-Filtered-Contrasts
+
+https://www.bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#input-data
+
+Checking for positive controls & interactions. 
+
+### Summarize results from initial DE investigations with an upset plot. 
+```{r GW to paste upset plot here}
+
+
+
+```
+
 

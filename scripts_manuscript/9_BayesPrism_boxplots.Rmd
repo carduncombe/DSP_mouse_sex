@@ -1,0 +1,657 @@
+---
+title: "20241022_Visualization of SUV and Bayes options"
+author: "Caroline_Duncombe"
+date: "2024-10-23"
+output: html_document
+---
+
+Goal of this is to create a looping visualization of the different comparisons for each InstaPrism option outputted. 
+#LOAD IN DATA
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(Seurat)
+library(cluster)
+library(ComplexHeatmap)
+library(tibble)
+library(readr)
+library(InstaPrism)
+library(ggpubr)
+library(rstatix)
+library(ggplot2)
+library(reshape2)  # for melt function
+library(dplyr)     # for data manipulation
+library(ggpubr)    # for ggboxplot
+library(ggsignif)  # for stat_pvalue_manual
+library(gridExtra)  # or library(patchwork) for a different approach
+
+
+
+#Reunning this with only the 2 plates and 2 samples. 
+
+rm(list = ls())
+
+```
+
+```{r Load in phenotype data}
+#Load in data for phenotypes:
+dat_pheno <- readRDS("clean_data/seurat_object/normalized_data.rds") 
+pheno_data <- dat_pheno@meta.data %>% rownames_to_column(var = "ddcfile")
+```
+
+```{r Load in the Insta Prism output}
+# Directory where the InstaPrism results are saved
+output_dir <- "clean_data/instaprism_results"
+
+# Get the list of .rdata files in the directory
+rdata_files <- list.files(output_dir, pattern = "\\.rdata$", full.names = TRUE)
+
+# Initialize a list to store the loaded data
+loaded_data <- list()
+
+# Loop through each .rdata file and load it into the list
+for (i in seq_along(rdata_files)) {
+  # Load the data from the file
+  load(rdata_files[i])
+  
+  # Store the loaded data into the list
+  loaded_data[[i]] <- InstaPrism.res.initial  # Assuming InstaPrism.res.initial is the object in each file
+  
+  # Optionally, assign names to the loaded data based on the file names
+  file_name <- basename(rdata_files[i])
+  names(loaded_data)[i] <- gsub("\\.rdata$", "", file_name)  # Remove .rdata from the name
+}
+
+# Now `loaded_data` contains all the reloaded InstaPrism results
+
+```
+
+```{r Create a couple more options within groups of interest with 200um SUV}
+
+#Schizont only at 200um SUV. 
+names(loaded_data)
+
+# "InstaPrism_result_dat_SUV_200"
+# "InstaPrism_result_dat_SUV_200_mock"
+# "InstaPrism_result_dat_SUV_200_bystander"
+# "InstaPrism_result_dat_SUV_200_schizont"
+
+```
+
+
+# Part 2 - make Figures for paper
+
+Graph 1 - Sex at baseline (mock 200um)
+immune_cells
+structure_cells
+
+Graph 2 - zonation (200um all)
+hepatocytes_zone
+
+Graph 3 - Bystander & Peripheral  (200um all)
+immune_cells
+structure_cells
+hepatocytes_activation
+
+Graph 4 - Sex on schizont  (200um schizont)
+immune_cells
+structure_cells
+hepatocytes_activation
+
+```{r Cell categories}
+
+hepatocytes_zone <- c("Pericentral hepatocytes","Periportal hepatocytes", "Midlobular hepatocytes")
+
+hepatocytes_activation <- c("Activated periportal hepatocytes","Inflammatory hepatocytes")
+
+immune_cells <- c("Monocytes & DCs","Kupffer cells","T & NK cells", "B cells")
+
+structure_cells <- c("Cholangiocytes","Endothelial cells","Fibroblasts", "Mesothelial cells")
+
+other_cells <- c("Periportal endothelial cells" )
+
+```
+
+```{r Set up boxplot colors}
+
+Group_colors  <- c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF")
+
+Zone_colors = c("PP" = "#006400", "PC" = "#91D1C2FF", "IZ" = "#00A087FF")
+
+Type_colors = c("schizont" = "black", "bystander" = "#FFC20A", "mock" = "grey")
+```
+
+```{r Step 1 - Function to create boxplots of the data for each unique loaded data and save into a file}
+
+
+plot_gene_boxplot_custom <- function(cell_type_rowname, x_axis_column, Instaprism_data, pheno_data, manual_colors) {  
+  # Extract the cell data from the S4 object
+  
+
+  # Check if the specified cell type is present in the cell data
+  if (!(cell_type_rowname %in% rownames(cell_data))) {
+    stop("The specified cell type is not present in the Instaprism_data.")
+  }
+
+  # Extract the row of interest (cell type)
+  cell_row <- cell_data[cell_type_rowname, , drop = FALSE]
+
+  # Reshape cell data to long format (dccfile, value)
+  cell_long <- melt(cell_row, variable.name = "ddcfile", value.name = "expression")
+
+  # Filter phenotype data to only include matching samples (dccfiles)
+  names_in_comparison <- unique(cell_long$Var2)
+  pheno_data_to_apply <- pheno_data %>% filter(ddcfile %in% names_in_comparison)
+
+  # Join proportion matrix data with phenotype data based on dccfile
+  plot_data <- pheno_data_to_apply %>%
+    left_join(cell_long, by = c("ddcfile" = "Var2")) %>%  # Ensure correct joining
+    mutate(labels = .data[[x_axis_column]])
+
+  # Check if the number of unique groups is either 2 or 3
+  unique_groups <- length(unique(plot_data$labels))
+  if (unique_groups == 2 || unique_groups == 3) {
+
+    # Perform statistical test based on the number of groups
+    if (unique_groups == 3) {
+      stat.test <- plot_data %>%
+        dunn_test(expression ~ labels, p.adjust.method = "bonferroni") %>%
+        add_significance()
+      plot_width <- 4.5
+      plot_height <- 4.5
+    } else if (unique_groups == 2) {
+      stat.test <- plot_data %>%
+        wilcox_test(expression ~ labels) %>%
+        add_significance()
+      plot_width <- 2.5
+      plot_height <- 3
+    }
+
+    # Annotate p-values with significance labels
+    stat.test <- stat.test %>%
+      mutate(p_label = case_when(
+        p.adj > 0.1 ~ "ns",
+        p.adj <= 0.1 & p.adj > 0.05 ~ as.character(round(p.adj, 3)),
+        p.adj <= 0.05 & p.adj > 0.01 ~ "*",
+        p.adj <= 0.01 & p.adj > 0.001 ~ "**",
+        p.adj <= 0.001 ~ "***"
+      ))
+
+    # Calculate dynamic y positions for significance annotations
+    max_y_value <- max(plot_data$expression, na.rm = TRUE)
+    y_positions <- seq(max_y_value * 1.0, max_y_value * 1.2, length.out = nrow(stat.test))
+# Define a buffer for the y-axis
+    # Plot the data
+    p <- ggboxplot(plot_data, x = "labels", y = "expression",  
+               add = "mean_se", fill = "labels") +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0), show.legend = FALSE) +
+  stat_pvalue_manual(stat.test, label = "p_label", hide.ns = FALSE, 
+                     y.position = y_positions, size = 5, label.size = 5, steps = 1, tip.length = 0) +
+  labs(
+    title = paste(cell_type_rowname),
+    x = NULL,
+    y = "Expression Level"
+  ) +
+  scale_fill_manual(values = manual_colors) +  # Apply custom colors
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Add box border
+    axis.ticks.y.right = element_line(size = 1),  # Right axis ticks
+    axis.ticks.x.top = element_line(size = 1),    # Top axis ticks
+    axis.line.y.right = element_line(size = 1),    # Right axis line
+    axis.line.x.top = element_line(size = 1)       # Top axis line
+  )
+
+  } else {
+    stop("The function is designed for datasets with either two or three unique groups.")
+  }
+
+  return(p)  # Return the plot object
+}
+
+# Example call
+plot_gene_boxplot_custom("Kupffer cells", "Group", Instaprism_data, pheno_data, Group_colors)
+
+```
+
+```{r PLot for combined boxplots}
+plot_combined_gene_boxplots <- function(cells_of_interest, x_axis_column, grid_columns, Instaprism_data, pheno_data, colors, save_name, width_use, height_use) {
+  # Create a folder to save combined plots if it doesn't exist
+  combined_folder <- "figs/Bayes_Prism_boxplots/paper_boxplots/"
+  if (!dir.exists(combined_folder)) {
+    dir.create(combined_folder)
+  }
+  
+  # Prepare to store individual plots
+  plot_list <- list()
+  
+  # Loop through each cell of interest to create plots
+  for (cell_type in cells_of_interest) {
+    p <- plot_gene_boxplot_custom(cell_type, x_axis_column, Instaprism_data, pheno_data, colors)
+    plot_list[[cell_type]] <- p  # Store the plot in the list
+  }
+  
+    combined_plot <- wrap_plots(plot_list, ncol = grid_columns) + 
+    plot_layout(guides = "collect") +  # Collect legends
+    theme(legend.position = "topright")  # Position the legend in the upper right
+  
+  # Add one legend for the combined plot
+  combined_plot <- combined_plot + 
+    guides(fill = guide_legend(nrow = 1))
+
+  # Save the combined plot
+  ggsave(filename = file.path(combined_folder, save_name), 
+         plot = combined_plot, 
+         width = width_use, height = height_use)  # Adjust width and height as needed
+}
+
+```
+
+
+```{r Figure on Mock, Sex}
+
+# Define the source group for the graphs: 
+cells_of_interest <- c(immune_cells, structure_cells)
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200_mock # Just mock samples
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+pheno_data <- pheno_data
+colors <- Group_colors
+
+
+# Call the function to generate and save combined boxplots
+plot_combined_gene_boxplots(cells_of_interest, "Group", 4, Instaprism_data, pheno_data, colors, "Sex_baseline_combined_boxplots.png", 12, 6)
+
+```
+
+```{r Figure on Zone}
+
+# Define the source group for the graphs: 
+cells_of_interest <- c(hepatocytes_zone)
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200 # all samples
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+pheno_data <- pheno_data
+colors <- Zone_colors
+
+
+# Call the function to generate and save combined boxplots
+plot_combined_gene_boxplots(cells_of_interest, "Liver_zone", 3, Instaprism_data, pheno_data, colors, "Zone_all_combined_boxplots.png", 10, 3)
+
+```
+
+```{r Figure on Type (Infection status)}
+
+# Define the source group for the graphs: 
+cells_of_interest <- c(immune_cells, structure_cells,hepatocytes_activation)
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200 # all samples
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+pheno_data <- pheno_data
+colors <- Type_colors
+
+
+# Call the function to generate and save combined boxplots
+plot_combined_gene_boxplots(cells_of_interest, "Type", 5, Instaprism_data, pheno_data, colors, "Type_all_combined_boxplots.png", 18, 7)
+
+```
+
+```{r Figure on Sex in Schizont (Infection status)}
+
+# Define the source group for the graphs: 
+cells_of_interest <- c(immune_cells, structure_cells, hepatocytes_activation)
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200_schizont # all samples
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+pheno_data <- pheno_data
+colors <- Group_colors
+
+
+# Call the function to generate and save combined boxplots
+plot_combined_gene_boxplots(cells_of_interest, "Group", 5, Instaprism_data, pheno_data, colors, "group_on schizont_combined_boxplots.png", 18, 7)
+
+```
+
+```{r Figure on Sex in Bystander (Infection status)}
+
+# Define the source group for the graphs: 
+cells_of_interest <- c(immune_cells, structure_cells, hepatocytes_activation)
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200_bystander # all samples
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+pheno_data <- pheno_data
+colors <- Group_colors
+
+
+# Call the function to generate and save combined boxplots
+plot_combined_gene_boxplots(cells_of_interest, "Group", 5, Instaprism_data, pheno_data, colors, "group_on Bystander_combined_boxplots.png", 18, 7)
+
+```
+
+
+
+
+#Part 2 - create boxplots for all comparisons to look at trends
+
+```{r Step 3 - Function to create final boxplots}
+
+
+plot_gene_boxplot <- function(cell_type_rowname, x_axis_column, Instaprism_data, pheno_data) {
+  
+  # Extract the cell data from the S4 object
+  cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+  
+  # Check if the specified cell type is present in the cell data
+  if (!(cell_type_rowname %in% rownames(cell_data))) {
+    stop("The specified cell type is not present in the Instaprism_data.")
+  }
+  
+  # Extract the row of interest (cell type)
+  cell_row <- cell_data[cell_type_rowname, , drop = FALSE]
+  
+  # Reshape cell data to long format (dccfile, value)
+  cell_long <- melt(cell_row, variable.name = "ddcfile", value.name = "expression")
+  
+  # Filter phenotype data to only include matching samples (dccfiles)
+  names_in_comparison <- unique(cell_long$Var2)
+  pheno_data_to_apply <- pheno_data %>% filter(ddcfile %in% names_in_comparison)
+  
+  # Join proportion matrix data with phenotype data based on dccfile
+  plot_data <- pheno_data_to_apply %>%
+    left_join(cell_long, by = c("ddcfile" = "Var2")) %>%  # Ensure correct joining
+    mutate(labels = .data[[x_axis_column]])
+  
+  # Check if the number of unique groups is either 2 or 3
+  unique_groups <- length(unique(plot_data$labels))
+  if (unique_groups == 2 || unique_groups == 3) {
+    
+    # Perform statistical test based on the number of groups
+    if (unique_groups == 3) {
+      stat.test <- plot_data %>%
+        dunn_test(expression ~ labels, p.adjust.method = "bonferroni") %>%
+        add_significance()
+      plot_width <- 4.5
+      plot_height <- 4.5
+    } else if (unique_groups == 2) {
+      stat.test <- plot_data %>%
+        wilcox_test(expression ~ labels) %>%
+        add_significance()
+      plot_width <- 2.5
+      plot_height <- 3
+    }
+    
+    # Annotate p-values with significance labels
+    stat.test <- stat.test %>%
+      mutate(p_label = case_when(
+        p.adj > 0.1 ~ "ns",
+        p.adj <= 0.1 & p.adj > 0.05 ~ as.character(round(p.adj, 3)),
+        p.adj <= 0.05 & p.adj > 0.01 ~ "*",
+        p.adj <= 0.01 & p.adj > 0.001 ~ "**",
+        p.adj <= 0.001 ~ "***"
+      ))
+    
+    # Calculate dynamic y positions for significance annotations
+    max_y_value <- max(plot_data$expression, na.rm = TRUE)
+    y_positions <- seq(max_y_value * 1.05, max_y_value * 1.2, length.out = nrow(stat.test))
+    
+    # Plot the data
+    p <- ggboxplot(plot_data, x = "labels", y = "expression", 
+                   add = "mean_se", fill = "labels") +
+      geom_jitter(position = position_jitter(width = 0.2, height = 0), show.legend = FALSE) +
+      stat_pvalue_manual(stat.test, label = "p_label", hide.ns = FALSE, 
+                         y.position = y_positions, size = 5, label.size = 5) +
+      labs(
+        title = paste(cell_type_rowname),
+        x = NULL,
+        y = "Expression Level"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        axis.title = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10)
+      )
+    
+  } else {
+    stop("The function is designed for datasets with either two or three unique groups.")
+  }
+}
+
+```
+
+```{r Step 2 - Loop over phenotype of interest to folder}
+
+# List of phenotypes of interest
+phenotype_of_interest <- c("Group", "Type", "Block", "Liver_zone")
+
+# Create the output directory if it doesn't exist
+output_dir <- "figs/Bayes_Prism_boxplots"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+# Loop through each dataset in loaded_data
+for (data_name in names(loaded_data)) {
+  
+  # Access the specific InstaPrism results object
+  InstaPrism_res <- loaded_data[[data_name]]
+  
+  # Extract the cell data matrix from InstaPrism results
+  cell_data <- as.matrix(InstaPrism_res@Post.ini.cs@theta)
+  
+  # Loop through each phenotype of interest
+  for (phenotype in phenotype_of_interest) {
+    
+    # Initialize a list to store plots for the current phenotype
+    plots <- list()
+    
+    # Loop through each row (gene/cell type) in the cell_data
+    for (cell_name in rownames(cell_data)) {
+      
+      # Try generating and saving the boxplot, handle errors gracefully
+      try({
+        # Generate the boxplot for each gene using the updated function
+        p <- plot_gene_boxplot(
+          cell_type_rowname = cell_name,  # Corrected variable name
+          x_axis_column = phenotype,        # Use the phenotype as the x-axis grouping
+          Instaprism_data = InstaPrism_res, # Pass the correct Instaprism data
+          pheno_data = pheno_data           # Phenotype data
+        )
+        
+        # Add the plot to the list with a unique name
+        plots[[paste(data_name, cell_name, phenotype, sep = "_")]] <- p
+        
+      }, silent = TRUE)  # Use silent = TRUE to skip over any errors without breaking the loop
+    }  # End cell_name loop
+    
+    # Check if there are plots to combine
+    if (length(plots) > 0) {
+      # Combine all plots into a grid
+      combined_plot <- grid.arrange(grobs = plots, ncol = 7)  # Adjust ncol for layout
+
+      # Create a subdirectory for the current phenotype if it doesn't exist
+      phenotype_folder <- file.path(output_dir, phenotype)
+      if (!dir.exists(phenotype_folder)) {
+        dir.create(phenotype_folder, recursive = TRUE)
+      }
+      
+      # Save the combined plot as a PNG file in the phenotype folder
+      combined_filename <- paste0(phenotype_folder, "/", data_name, "_combined_boxplots.png")
+      ggsave(combined_filename, plot = combined_plot, width = 30, height = 8)  # Adjust dimensions as needed
+    }
+  }  # End phenotype loop
+}  # End dataset loop
+
+```
+
+Conclusion: The data looks good with the SUV correction. The samples I would expect to be up are up and the trends are there. Block 3 seems to be a little off, but combined the trends are there! I can work with this. 
+
+# Part 3 - do math to include in paper on cell proportions
+
+```{r Quantifying the proportion of hepatocytes}
+
+# Select dataset
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200_mock
+
+# Define lists for hepatocytes and non-hepatocytes
+hepatocyte <- c(hepatocytes_zone, hepatocytes_activation)
+non_hepatocyte <- c(immune_cells,structure_cells,other_cells)
+
+# Convert cell_data to a matrix if it’s not already one (as you've done)
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+
+# Sum rows for hepatocytes and non-hepatocytes
+hepatocyte_sum <- rowMeans(cell_data[hepatocyte, , drop = FALSE])
+hepatocyte_range <- apply(cell_data[hepatocyte, , drop = FALSE], 1, range)
+
+non_hepatocyte_sum <- rowMeans(cell_data[non_hepatocyte, , drop = FALSE])
+non_hepatocyte_range <- apply(cell_data[non_hepatocyte, , drop = FALSE], 1, range)
+
+
+# Calculate sums for upper and lower limits
+hepatocyte_total <- sum(hepatocyte_sum)  # Upper limits
+non_hepatocyte_total <- sum(non_hepatocyte_sum) 
+
+# Calculate sums for upper and lower limits
+hepatocyte_range_sum_upper <- sum(hepatocyte_range[2, ])  # Upper limits
+hepatocyte_range_sum_lower <- sum(hepatocyte_range[1, ])  # Lower limits
+
+non_hepatocyte_range_sum_upper <- sum(non_hepatocyte_range[2, ])  # Upper limits for non-hepatocytes
+non_hepatocyte_range_sum_lower <- sum(non_hepatocyte_range[1, ])  # Lower limits for non-hepatocytes
+
+# Print results
+cat("Hepatocyte Proportion - Average:", hepatocyte_total, "\nRange:", hepatocyte_range_sum_lower, hepatocyte_range_sum_upper, "\n")
+cat("Non-Hepatocyte Proportion - Average:", non_hepatocyte_total, "\nRange:", non_hepatocyte_range_sum_lower, non_hepatocyte_range_sum_upper, "\n")
+
+
+```
+
+
+```{r Now create a graph for the supplements}
+
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200_mock
+
+# Create a data frame for plotting
+data_plot <- data.frame(
+  Cell_Type = c("Hepatocytes", "Non-Hepatocytes"),
+  Average = c(hepatocyte_total, non_hepatocyte_total),
+  Lower_Range = c(hepatocyte_range_sum_lower, non_hepatocyte_range_sum_lower),
+  Upper_Range = c(hepatocyte_range_sum_upper, non_hepatocyte_range_sum_upper)
+)
+
+# Reshape the data for plotting
+data_long <- tidyr::pivot_longer(data_plot, cols = c("Lower_Range", "Upper_Range"),
+                                  names_to = "Range_Type", values_to = "Value")
+
+# Create the bar plot
+ggplot(data_plot, aes(x = Cell_Type, y = Average, fill = Cell_Type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = Lower_Range, ymax = Upper_Range), width = 0.2, position = position_dodge(0.9)) +
+  labs(title = "Average Proportions of Hepatocytes vs. Non-Hepatocytes",
+       x = "Cell Type",
+       y = "Average Proportion") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+
+```{r attempt}
+
+hepatocyte <- c(hepatocytes_zone, hepatocytes_activation)
+non_hepatocyte <- c(immune_cells,structure_cells,other_cells)
+
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200_mock
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+
+# Reshape cell data to long format (dccfile, value)
+cell_long <- melt(cell_data, variable.name = "ddcfile", value.name = "expression")
+
+# Filter phenotype data to only include matching samples (dccfiles)
+names_in_comparison <- unique(cell_long$Var2)
+pheno_data_to_apply <- pheno_data %>% filter(ddcfile %in% names_in_comparison)
+
+plot_data <- pheno_data_to_apply %>%
+    left_join(cell_long, by = c("ddcfile" = "Var2")) %>%
+  mutate(hepatocyte_des = case_when (Var1 = hepatocyte ~ "hepatocyte",
+                                 Var1 = non_hepatocyte ~ non_hepatocyte ~ "Not hepatocyte"))
+
+
+ggplot(plot_data, aes(x = hepatocyte_des, y = expression, fill = hepatocyte_des)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = Lower_Range, ymax = Upper_Range), width = 0.2, position = position_dodge(0.9)) +
+  facet_wrap(~Group)
+  labs(title = "Average Proportions of Hepatocytes vs. Non-Hepatocytes",
+       x = "Cell Type",
+       y = "Average Proportion") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Combine hepatocyte and non-hepatocyte identifiers
+hepatocyte <- c(hepatocytes_zone, hepatocytes_activation)
+non_hepatocyte <- c(immune_cells, structure_cells, other_cells)
+
+# Load the InstaPrism data
+Instaprism_data <- loaded_data$InstaPrism_result_dat_SUV_200_mock
+cell_data <- as.matrix(Instaprism_data@Post.ini.cs@theta)
+
+cell_long <- melt(cell_data, variable.name = "ddcfile", value.name = "expression")
+
+# Filter phenotype data to only include matching samples (dccfiles)
+names_in_comparison <- unique(cell_long$Var2)
+pheno_data_to_apply <- pheno_data %>% filter(ddcfile %in% names_in_comparison)
+
+# Merge phenotype and cell data
+plot_data <- pheno_data_to_apply %>%
+  left_join(cell_long, by = c("ddcfile" = "Var2")) %>%
+  mutate(hepatocyte_des = case_when(
+    Var1 %in% hepatocyte ~ "Hepatocyte",
+    Var1 %in% non_hepatocyte ~ "Non-Hepatocyte",
+    TRUE ~ "Other"
+  ))
+
+
+# Create the plot with jitter and error bars
+ggbarplot(data = plot_data, 
+          x = "Var1", 
+          y = "expression", 
+          fill = "hepatocyte_des", 
+          add = "mean_se",  # Add mean and standard error bars
+          error.plot = "errorbar",
+          width = 0.7) +  # Adjust bar width
+  geom_jitter(aes(color = Block)) +  # Add jitter for individual points
+  facet_wrap(~ Treatment) +
+  labs(title = "Average Proportions of Hepatocytes vs. Non-Hepatocytes",
+       x = "Cell Type",
+       y = "Average Proportion") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Just hepaatocytes
+
+summary_data <- plot_data %>%
+  group_by(hepatocyte_des, ddcfile, Group, Block) %>%  # Include Block in grouping
+  summarise(sum_expression = sum(expression, na.rm = TRUE))
+
+ggbarplot(data = summary_data, 
+          x = "hepatocyte_des", 
+          y = "sum_expression", 
+          fill = "hepatocyte_des", 
+          add = "mean_se",  # Add mean and standard error bars
+          error.plot = "errorbar",
+          width = 0.7) +  # Adjust bar width
+  geom_jitter(aes(color = Block)) +  # Add jitter for individual points
+  facet_wrap(~ Group) +
+  labs(title = "Average Proportions of Hepatocytes vs. Non-Hepatocytes",
+       x = "Cell Type",
+       y = "Average Proportion") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+
+
+```

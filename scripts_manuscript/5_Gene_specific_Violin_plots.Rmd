@@ -1,0 +1,511 @@
+---
+title: "5_Violin_plots_of_genes"
+author: "Caroline_Duncombe"
+date: "2024-11-03"
+output: html_document
+---
+
+###### CAROLINE TO UPDATE FOR FINAL VERION ##########
+PART V: DSP Analysis on GeoMX data 
+
+Script will take the normalized/batch corrected data & create individual violin plot.
+
+
+Working draft - no need for GW to check.
+
+########################################################################################################################################
+
+# STEP 1: LOAD IN DATA
+
+########################################################################################################################################
+
+Goal of this script is to create output violin plots for genes of interest
+```{r setup, include=FALSE}
+
+library(SEARchways)
+library(BIGpicture)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(circlize)
+library(stringr)
+library(RColorBrewer)
+library(here)
+library(readr)
+library(ComplexUpset)
+library(Seurat)
+library(patchwork)
+
+
+rm(list = ls())
+here::i_am("scripts_manuscript/5_Gene_specific_Violin_plots.Rmd")
+seuratObj.tmp <- readRDS(here("clean_data_manuscript/seurat_object/QC_normalized_data_200um_SVA_CCA.rds"))
+
+```
+
+
+
+########################################################################################################################################
+
+# STEP 2: MAKE FUNCTIONS!!!
+
+########################################################################################################################################
+
+Question for GW: Do I make these violin plots with CCA corrected/integrated data or the batch corrected verison.
+
+
+```{r Create the subset cat}
+
+dat <- subset(seuratObj.tmp, subset = ROI_size == "200um" & Type != "bystander")
+
+# Type 1
+VlnPlot(object = dat, features = 'Irf7', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Irf3', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Irf9', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Ifnar1', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Ifnar2', split.by = 'Group', group.by = 'Type')
+
+#ISGs
+VlnPlot(object = dat, features = 'Ifi44', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Ifit1', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Usp18', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Ifit3', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Ifih1', split.by = 'Group', group.by = 'Type') 
+
+
+#Inflammation
+VlnPlot(object = dat, features = 'Cxcl9', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Cxcl10', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Saa1', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Saa2', split.by = 'Group', group.by = 'Type')
+VlnPlot(object = dat, features = 'Lcn2', split.by = 'Group', group.by = 'Type') # very hormone specific. 
+VlnPlot(object = dat, features = 'Msr1', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Cd74', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Ifitm3', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Ly6e', split.by = 'Group', group.by = 'Type') 
+
+#Abortive cells:
+VlnPlot(object = dat, features = 'Cxcl10', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Sqstm1', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Myc', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Hes1', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Mdm2', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Nfkbia', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Cdkn1a', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Icam1', split.by = 'Group', group.by = 'Type') 
+#Could query all DEs that are more abortive and create my own Gene set enrichment analysis. 
+
+#Other
+VlnPlot(object = dat, features = 'Xcl1', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Fcer1g', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Rheb', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Fabp5', split.by = 'Group', group.by = 'Type') 
+
+
+#Kuppfer cells
+VlnPlot(object = dat, features = 'Clec4f', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Csf1r', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Jchain', split.by = 'Group', group.by = 'Type') 
+
+#T cells
+VlnPlot(object = dat, features = 'Cd8a', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Cxcl3', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Xcl1', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Tlr4', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Tlr7', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Gbp2', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Cd27', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Cd274', split.by = 'Group', group.by = 'Type') 
+VlnPlot(object = dat, features = 'Rheb', split.by = 'Group', group.by = 'Type') 
+
+
+dat <- subset(seuratObj.tmp, subset = ROI_size != "200um")
+
+```
+
+
+Create gene lists
+```{r}
+
+cell_categories <- list(
+# Type 1
+type1_genes = c("Irf7", "Irf3", "Irf9", "Ifnar1", "Ifnar2"),
+# ISGs
+isg_genes = c("Ifi44", "Ifit1", "Usp18", "Ifit3", "Ifih1"),
+# Inflammation
+inflammation_genes = c("Cxcl9", "Cxcl10", "Saa1", "Saa2", "Saa3", "Lcn2", "Msr1", "Cd74", "Ifitm3", "Ly6e"),
+# Abortive cells
+abortive_genes = c("Cxcl10", "Sqstm1", "Myc", "Hes1", "Mdm2", "Nfkbia", "Cdkn1a", "Icam1"),
+# Other
+other_genes = c("Xcl1", "Fcer1g", "Rheb", "Fabp5",'Camk1d',"Cd8a", "Cxcl3", "Xcl1", "Tlr4", "Tlr7", "Gbp2", "Cd27", "Cd274", "Cxcr3"),
+lipid_metabolism = c("Insig1","Fabp5"),
+# Kuppfer cells
+kupffer_genes = c("Clec4f", "Csf1r", "Jchain", "Marco", "Mertk", "Cadm1", "Itga9", "Trpm2"), #"Masr1"
+monocytes_DCs_presentation = c("H2-Aa", "H2-Eb1", "H2-Ab1", "Psap"),
+leukocyte_migration_activation = c("Itk", "Txk", "Bcl11a", "Mef2c", "Bcl11b", "Satb1"),
+NK_cytotoxicity = c("Cd247", "Lck", "Vav3", "Prkca"),
+hepatocyte_gene = c("Alb", "Apoc3", "Apoh", "Hamp"), #"Cyp1e2"
+hormones = c("Srd5a1", "Ar", "Esr1", "Esr2", "Cyp7b1", "Cyp2b13", "Hsd17b2", "Cyp7a1", "Hsd17b12")
+)
+
+
+# Tgtp1 - unique to females! Never called out before. 
+
+#Cyp7b1 - related to b cell chemotasis. 
+
+#Fasn is interesting.- fatty acid synthetase.
+#Fasn is interesting.- fatty acid synthetase with Cyp4a14 interpretation. 
+
+
+#Interesting point - The b cell trend switches - check the LogFC here. 
+
+
+```
+
+
+Dehydroepiandrosterone (DHEA) inhibits glucose 6-phosphate dehydrogenase (G6PDH) of different species and may potentially decrease intracellular glutathione. Therefore, it can have and enhance anti-parasitic action against Plasmodium spp. We evaluated the antiplasmodial activity and the interaction of DHEA with several antimalarial drugs. The inhibitory effect of DHEA on erythrocytic and G6PDH activity and changes in the content of total and reduced gluthatione Plasmodium falciparum content were also evaluated. DHEA showed antiplasmodial activity in vitro, but the potency was low (IC(50) 118.5 μM). DHEA inhibits G6PDH from healthy erythrocyte and decreases GSH content in both erythrocytes and P. falciparum. DHEA did not synergize or antagonize the antiplasmodial effect of several antimalarial drugs. The most important actions of DHEA were the inhibition of G6PDH activity, and the decrease in both P. falciparum and erythrocyte GSH. Since most of the GSH in Plasmodium spp. infected erythrocytes comes from the parasite itself, it is possible that DHEA analogs could act with higher selectivity, better potency, and might interact synergistically with antimalarials drugs.
+
+The point is that the host response would be connected to the downstream integration of 
+
+Dehydroepiandrosterone effect on Plasmodium falciparum and its interaction with antimalarial drugs
+
+
+```{r Customize the violin plot}
+
+# Define custom colors for each group
+Group_colors <- c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF")
+
+# Generate the violin plot with customizations
+VlnPlot(object = dat, features = 'G6pc', split.by = 'Group', group.by = 'Type') +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),  # Set x-axis labels to 0 degrees
+    legend.position = "right",                           # Position legend on the right
+    axis.title.x = element_blank(),                      # Remove x-axis title
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Full box border
+    axis.line = element_line(size = .5),                  # Uniform axis line thickness
+    axis.ticks = element_line(size = 1)                  # Uniform tick thickness
+  ) +
+  scale_fill_manual(values = Group_colors)               # Apply custom colors
+            # Apply custom colors
+
+```
+
+
+```{r Looping over groups}
+
+Group_colors <- c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF")
+
+# Set directory path for saving plots
+base_save_path <- "figs/gene_violin_plots_grids"
+
+# Function to generate and save grid plots
+for (category_name in names(cell_categories)) {
+  genes <- cell_categories[[category_name]]
+  
+  # Create violin plots for each gene
+  plots <- lapply(genes, function(gene) {
+    VlnPlot(object = dat, features = gene, split.by = 'Group', group.by = 'Type') +
+      theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),  # Set x-axis labels to 0 degrees
+    legend.position = "right",                           # Position legend on the right
+    axis.title.x = element_blank(),                      # Remove x-axis title
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Full box border
+    axis.line = element_line(size = .5),                  # Uniform axis line thickness
+    axis.ticks = element_line(size = 1)                  # Uniform tick thickness
+  ) +
+  scale_fill_manual(values = Group_colors)   
+  })
+  
+  # Combine plots into a grid
+  grid_plot <- wrap_plots(plots, ncol = 3)  # Adjust columns as needed
+  
+ggsave(filename = file.path(base_save_path, paste0(category_name, "_grid_plot.png")),
+         plot = grid_plot,
+         width = 12, height = 8) 
+  
+}
+
+
+```
+
+I want to create the panel for sex by inflammation - to emphasize different genes
+
+```{r Figure for Sex by Inflammation Panel 5 across}
+
+
+dat <- subset(seuratObj.tmp, subset = ROI_size == "200um" & Type != "bystander")
+
+Group_colors <- c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF")
+
+# Set directory path for saving plots
+base_save_path <- "figs/gene_violin_plots_grids"
+
+# Define cell categories with row labels (with line breaks for wrapping)
+cell_categories <- list(
+  "Interferon\nstimulated" = c("Irf7", "Irf3", "Irf9", "Ifit1", "Usp18"),
+  "Cell stress &\nInflammation" = c("Cxcl9", "Saa3", "Lcn2", "Cd74", "Ly6e"),
+  "Abortive" = c("Tgtp1", "Cxcl10", "G6pc", "Sqstm1", "Nfkbia"),
+  "Metabolism" = c("Insig1", "Fabp5", "Fasn", "Cyp4a14", "Sult2a1")
+)
+# Function to generate and save grid plots
+for (category_name in names(cell_categories)) {
+  genes <- cell_categories[[category_name]]
+  
+  # Create violin plots for each gene
+  plots <- lapply(genes, function(gene) {
+    VlnPlot(object = dat, features = gene, split.by = 'Group', group.by = 'Type') +
+      theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),  # Set x-axis labels to 0 degrees
+    legend.position = "right",                           # Position legend on the right
+    axis.title.x = element_blank(),                      # Remove x-axis title
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Full box border
+    axis.line = element_line(size = .5),                  # Uniform axis line thickness
+    axis.ticks = element_line(size = 1)                  # Uniform tick thickness
+  ) +
+  scale_fill_manual(values = Group_colors)   
+  })
+  
+  # Combine plots into a grid
+  grid_plot <- wrap_plots(plots, ncol = 5)  # Adjust columns as needed
+  
+ggsave(filename = file.path(base_save_path, paste0(category_name, "_grid_plot_manuscript.png")),
+         plot = grid_plot,
+         width = 20, height = 3) 
+  
+}
+
+
+
+######################## COMBINE OPTON ###############
+
+# Loop through each category to create violin plots and arrange them
+category_plots <- list()
+
+for (category_name in names(cell_categories)) {
+  genes <- cell_categories[[category_name]]
+  
+  # Create violin plots for each gene in the current category
+  plots <- lapply(genes, function(gene) {
+    VlnPlot(object = dat, features = gene, split.by = 'Group', group.by = 'Type') +
+      theme(
+        axis.text.x = element_text(angle = 0, hjust = 0.5),
+        legend.position = "right",
+        axis.title.x = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, size = 1),
+        axis.line = element_line(size = 0.5),
+        axis.ticks = element_line(size = 1)
+      ) +
+      scale_fill_manual(values = Group_colors) 
+  })
+  
+  row_plot <- wrap_plots(plots, ncol = 5)
+  
+  # Create a label for the row and combine with the row plot
+  row_label <- ggplot() + 
+    annotate("text", x = 0.5, y = 0.5, label = category_name, fontface = "bold",angle = 0, size = 6, hjust = 0.5) +
+    theme_void()
+  
+  # Combine the row label with the row of plots
+  combined_row <- row_label + row_plot + plot_layout(widths = c(1, 10))  # Adjust widths as needed
+  category_plots[[category_name]] <- combined_row
+}
+
+# Stack all labeled rows vertically and collect the legend
+final_grid <- wrap_plots(category_plots, ncol = 1) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "right")
+
+# Save the combined plot grid
+ggsave(filename = file.path(base_save_path, "gene_violin_plots_grid_manuscript.png"),
+       plot = final_grid,
+       width = 18, height = 10)
+
+```
+
+
+```{r Figure for Sex by Inflammation Panel}
+
+
+dat <- subset(seuratObj.tmp, subset = ROI_size == "200um" & Type != "bystander")
+
+Group_colors <- c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF")
+
+# Set directory path for saving plots
+base_save_path <- "figs/gene_violin_plots_grids"
+
+# Define cell categories with row labels (with line breaks for wrapping)
+cell_categories <- list(
+  "Interferon\nstimulated" = c("Irf7", "Irf9", "Ifit1"),
+  "Cell stress &\nInflammation" = c("Cxcl9", "Saa3", "Lcn2"),
+  "Abortive" = c("Tgtp1", "Cxcl10", "G6pc"),
+  "Metabolism" = c("Insig1", "Fabp5", "Fasn"),
+  "Others" = c("Cyp4a14", "Sult2a1", "Cd74")
+)
+
+
+######################## COMBINE OPTON ###############
+
+# Loop through each category to create violin plots and arrange them
+category_plots <- list()
+
+for (category_name in names(cell_categories)) {
+  genes <- cell_categories[[category_name]]
+  
+  # Create violin plots for each gene in the current category
+  plots <- lapply(genes, function(gene) {
+    VlnPlot(object = dat, features = gene, split.by = 'Group', group.by = 'Type') +
+      theme(
+        axis.text.x = element_text(angle = 0, hjust = 0.5),
+        legend.position = "right",
+        axis.title.x = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, size = 1),
+        axis.line = element_line(size = 0.5),
+        axis.ticks = element_line(size = 1)
+      ) +
+      scale_fill_manual(values = Group_colors) 
+  })
+  
+  row_plot <- wrap_plots(plots, ncol = 3)
+  
+  # Create a label for the row and combine with the row plot
+  row_label <- ggplot() + 
+    annotate("text", x = 0.5, y = 0.5, label = category_name, fontface = "bold",angle = 0, size = 6, hjust = 0.5) +
+    theme_void()
+  
+  # Combine the row label with the row of plots
+  combined_row <- row_label + row_plot + plot_layout(widths = c(1, 6))  # Adjust widths as needed
+  category_plots[[category_name]] <- combined_row
+}
+
+# Stack all labeled rows vertically and collect the legend
+final_grid <- wrap_plots(category_plots, ncol = 1) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "right")
+
+# Save the combined plot grid
+ggsave(filename = file.path(base_save_path, "gene_violin_plots_grid_manuscript_3.png"),
+       plot = final_grid,
+       width = 12, height = 10)
+
+```
+
+
+```{r Figure of Zonation & gene}
+
+dat <- subset(seuratObj.tmp, subset = ROI_size == "200um")
+Liver_zone = c("PP" = "#006400", "PC" = "#91D1C2FF", "IZ" = "#00A087FF")
+
+
+
+custom_colors <- list(
+  Treatment = c("infected" = "orange", "uninfected" = "grey23"),  # Colors for Treatment levels
+  Block = c("1" = "grey10", "2" = "grey40", "3" = "grey80"),  # Existing colors for Block
+  Type = c("schizont" = "black", "bystander" = "#FFC20A", "mock" = "grey"),  # Colors for Type levels
+  Group = c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF"),
+  ROI_size = c("200um" = "#290916", "100um" = "#67032f", "75um" = "#a1045a","50um" = "#BE93D4"),
+  Liver_zone = c("PP" = "#006400", "PC" = "#91D1C2FF", "IZ" = "#00A087FF")
+)
+
+cell_categories <- list(cyp2a4 = c("Cyp2a4"))
+# Set directory path for saving plots
+base_save_path <- "figs/gene_violin_plots_grids"
+
+# Function to generate and save grid plots
+for (category_name in names(cell_categories)) {
+  genes <- cell_categories[[category_name]]
+  
+  # Create violin plots for each gene
+  plots <- lapply(genes, function(gene) {
+    VlnPlot(object = dat, features = gene, split.by = 'Liver_zone', group.by = 'Group') +
+      theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),  # Set x-axis labels to 0 degrees
+    legend.position = "right",                           # Position legend on the right
+    axis.title.x = element_blank(),                      # Remove x-axis title
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Full box border
+    axis.line = element_line(size = .5),                  # Uniform axis line thickness
+    axis.ticks = element_line(size = 1)                  # Uniform tick thickness
+  ) +
+  scale_fill_manual(values = Liver_zone)   
+  })
+  
+  # Combine plots into a grid
+  grid_plot <- wrap_plots(plots, ncol = 1)  # Adjust columns as needed
+  
+ggsave(filename = file.path(base_save_path, paste0(category_name, "_grid_plot.png")),
+         plot = grid_plot,
+         width = 4, height = 3) 
+  
+}
+
+
+```
+
+
+
+```{r Figure for Sex by Inflammation Panel M vs F only}
+
+
+dat <- subset(seuratObj.tmp, subset = ROI_size == "200um" & Type != "bystander" & Group != "ORX")
+
+Group_colors <- c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF")
+
+# Set directory path for saving plots
+base_save_path <- "figs/gene_violin_plots_grids"
+
+# Define cell categories with row labels (with line breaks for wrapping)
+cell_categories <- list(
+  "Interferon\nstimulated" = c("Irf7", "Irf9", "Ifit1"),
+  "Cell stress &\nInflammation" = c("Cxcl9", "Saa3", "Lcn2"),
+  "Abortive" = c("Tgtp1", "Cxcl10", "G6pc")
+)
+
+
+######################## COMBINE OPTON ###############
+
+# Loop through each category to create violin plots and arrange them
+category_plots <- list()
+
+for (category_name in names(cell_categories)) {
+  genes <- cell_categories[[category_name]]
+  
+  # Create violin plots for each gene in the current category
+  plots <- lapply(genes, function(gene) {
+    VlnPlot(object = dat, features = gene, split.by = 'Group', group.by = 'Type') +
+      theme(
+        axis.text.x = element_text(angle = 0, hjust = 0.5),
+        legend.position = "right",
+        axis.title.x = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, size = 1),
+        axis.line = element_line(size = 0.5),
+        axis.ticks = element_line(size = 1)
+      ) +
+      scale_fill_manual(values = Group_colors) 
+  })
+  
+  row_plot <- wrap_plots(plots, ncol = 3)
+  
+  # Create a label for the row and combine with the row plot
+  row_label <- ggplot() + 
+    annotate("text", x = 0.5, y = 0.5, label = category_name, fontface = "bold",angle = 0, size = 6, hjust = 0.5) +
+    theme_void()
+  
+  # Combine the row label with the row of plots
+  combined_row <- row_label + row_plot + plot_layout(widths = c(1, 4))  # Adjust widths as needed
+  category_plots[[category_name]] <- combined_row
+}
+
+# Stack all labeled rows vertically and collect the legend
+final_grid <- wrap_plots(category_plots, ncol = 1) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "right")
+
+# Save the combined plot grid
+ggsave(filename = file.path(base_save_path, "gene_violin_plots_grid_MvF.png"),
+       plot = final_grid,
+       width = 10, height = 8)
+
+```
+
+
+
+

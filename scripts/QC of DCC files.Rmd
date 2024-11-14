@@ -1,0 +1,164 @@
+---
+title: "QC evaluations of transcriptomic data"
+author: "Caroline_Duncombe"
+date: "2024-08-13"
+output: html_document
+---
+
+# Overview of GeoMX sample omission process
+
+There are several methods for filtering samples for GeoMX. There could be the Nanostring recommended approach, where using the point and click option you are filtering based on their 
+* (1) technical signal criteria
+* (2) biological probe QC process
+* (3) filtering down of the genes (target) that have low signal and low variance. 
+
+```{r load libraries}
+
+library(here)
+library(GeomxTools)
+
+```
+
+```{r Prepare GeoMx object}
+download_directory <- here::here('raw_data/dcc_files/DCC-20240715')
+
+  # Point the readNanoStringGeoMxSet function to the directory containing DCC files from this plate
+dccFiles <- dir(download_directory, pattern = "\\w*.dcc$", full.names = TRUE)
+#dccFiles <- download_directory
+  
+  # Point to the pkc file (kind of like a reference atlas for nanostring)
+  pkcFile <- "raw_data/pkc/Mm_R_NGS_WTA_v1.0.pkc"
+  
+  # Point to the annotation file (metadata for the samples)
+  annotationFile <- "raw_data/meta_data/annotation_data (2).xlsx"
+  
+  myData <- suppressWarnings(readNanoStringGeoMxSet(dccFiles = dccFiles,
+                                                    pkcFiles = pkcFile,
+                                                    phenoDataFile = annotationFile,
+                                                    phenoDataSheet = "Master",
+                                                    # this is the excel sheet’s name
+                                                    phenoDataDccColName = "SAMPLE_ID",
+                                                    # these are headers/column names in the excel file
+                                                    protocolDataColNames = c("ROI_ID") # Add columns about sequencing data here. 
+                                                    ))
+  
+```
+
+After reading in the object, we will do a couple of QC steps.
+
+Shift all 0 counts by 1
+Flag low quality ROIs
+Flag low quality probes
+Remove low quality ROIs and probes
+
+```{r}
+demoData <- myData
+#demoData <- shiftCountsOne(demoData, useDALogic=TRUE) # shifts all 0 counts in the file to 1 (why is this necessary?)
+demoData <- setSegmentQCFlags(demoData, 
+                  qcCutoffs=list(minSegmentReads=1000, 
+                                 percentAligned=80, 
+                                 percentStitched=80,
+                                 percentTrimmed=80,
+                                 percentSaturation=50,
+                                 minNegativeCount=0, 
+                                 maxNTCCount=1000,
+                                 minArea=1800,
+                                 minNuclei=2))
+
+demoData <- setBioProbeQCFlags(demoData,
+                    qcCutoffs=list(minProbeRatio=0.1,
+                                   percentFailGrubbs=20),
+                   removeLocalOutliers=FALSE)
+
+demoflag <- protocolData(demoData)[["QCFlags"]]    # 5 samples failed
+probeflag <- featureData(demoData)[["QCFlags"]]    # no probes failed
+
+QCResultsIndex <- which(apply(protocolData(demoData)[["QCFlags"]], 
+                              1L , function(x) sum(x) == 0L))
+QCPassed <- demoData[, QCResultsIndex]
+dim(QCPassed) 
+# Features  Samples 
+# 20175      273 
+
+#
+# Note: Samples in meta seem off from DCC file. How do I check this? The samples filtered don't match what I have found. 
+
+#Decide whether to use the samples that did not pass in the downstream analysis.
+
+```
+
+
+# Process conducted with RAM
+
+## Technical signal 
+Read threshold
+Want segments with less than 1000 raw reads
+
+Aligned reads
+80% raw read aligned
+*If failed this nto great. Omit from analysis. 
+
+Sequnecing Saturation - qdequately sequenced the library. Not confident you have captured. Might indicate you have seqeunced it enough. 
+50%
+*if not passed, need to also omit. 
+
+Want to adjust the Nuclei Count
+Surface are et minumum to 1800
+
+## Technical signal 
+
+
+Stiched - %
+realted to the alignment of primers. 
+
+## We have done the QC on the samples.
+On the point and clide
+Omited 5, did not exclude by nuclei count. 
+
+
+# Biological Probe QC
+leave on the default parameters.
+Looks at if probes are consitent across ROIs. 
+All the probes passed. 
+
+Outcome- keeping all the probes in the dataset.
+
+Coudl be more stringent - but do not do.
+
+# segements = ROIS.
+Don't filter ROIs at this stage.
+
+# Step 3 - filter the target (genes) for each ROIs
+This would this be donw in R.
+High signal with low variablility.
+Ram recommends the keeping the targets that 5%. Remvoing the highest variability and dn lowest number. 
+Set to the Higher of LOQ and user defined value.
+
+We set to 2% which leaves the about 10,000 genes. 
+
+#Next step don't use the data normalization. 
+
+Nanostring recommend the Q3 normalization strategy. looking at 75th quartile.
+The low sized ones might be problemnation. Number of counts and the spread of them. 
+
+
+# there are 19963
+# you are not sequencing directly the RNA moelcule but sequecning the probe that was bound to the RNA molecule. 
+
+
+# Now try to do this:
+
+What we got:
+* DCC files - Scott groups do seqeuncing and then they processing and created a DCC file for us. Input fastq and output DCC. 
+* PKC file - from nanostring - connects probe ID to a target gene.
+* fastq files - get from Scott Kennedy - do it now rather than forget. 
+* High resolution image of the GeoMX images. 
+* library readout - information sent on libraries to Scott Kennedy.
+* a version of normalization. 
+
+# Theo Bammler
+
+Referred by Ram.
+They do end-to-end analysis. 
+3000 - 5000 - For end to end analysis. 
+There might be better methods for normalization. 

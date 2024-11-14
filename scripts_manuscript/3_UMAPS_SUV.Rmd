@@ -1,0 +1,499 @@
+---
+title: "Creating UMAP Plots for DSP Analysis"
+author: "Caroline_Duncombe"
+date: "2024-11-13"
+output: html_document
+---
+
+PART III: DSP Analysis on GeoMX data 
+
+Script will take the normalized/batch corrected data, run CCA & MNN, and produce UMAPS for the manuscript. 
+
+Need to run CCA & MNN since there is a signficant batch effect on my samples. 
+
+########################################################################################################################################
+
+# STEP 1: LOAD IN DATA AND LOOK AT FORM
+
+########################################################################################################################################
+
+
+```{r Load libraries}
+
+library(dplyr)
+library(Seurat)
+library(cluster)
+library(ComplexHeatmap)
+library(tibble)
+library(readr)
+library(mclust)
+library(ggplot2)
+library(cowplot)
+library(reshape2)
+library(RColorBrewer)
+library(scales)  # For percentage formatting
+library(patchwork)  # For combining plots
+
+
+rm(list = ls())
+
+dat <- readRDS("clean_data_manuscript/seurat_object/QC_normalized_data_200um_SVA.rds")
+
+```
+
+
+Comparing the batch corrected samples to the SVA corrected samples. 
+
+```{r Check that SVA package batch correction shifted outcomes}
+
+# Extract SVA batch-corrected counts
+svacounts <- GetAssayData(dat, assay = "SVA_batchCorrected", layer = "counts")
+
+# Extract the original GeoMx counts
+geomx_counts <- GetAssayData(dat, assay = "GeoMx", layer = "counts")
+
+# Store the summed counts as metadata
+dat_test <- AddMetaData(dat, metadata = Matrix::colSums(svacounts), col.name = "SVA_batchCorrected_sum")
+dat_test <- AddMetaData(dat_test, metadata = Matrix::colSums(geomx_counts), col.name = "GeoMx_sum")
+
+# Now use FeatureScatter to compare the summed counts for each cell
+plot1 <- FeatureScatter(dat_test, feature1 = "SVA_batchCorrected_sum", feature2 = "GeoMx_sum")
+
+plot1
+
+```
+
+Figure looks like somthing was altered. Don't have enough knowledge to interpret. 
+
+
+########################################################################################################################################
+
+# STEP 2: RUN CCA & MNN
+
+########################################################################################################################################
+
+Batch correction: canonical correlation analysis (CCA) + mutual nearest neighbors (MNN) using Seurat v3
+Here we use Seurat v3 to see to what extent it can remove potential batch effects.
+
+
+```{r Cluster batch correction with CCA + MNN}
+
+DefaultAssay(dat) <- "SVA_batchCorrected" # Want to run this on the SVA samples I think. Could change though. 
+
+# Split the Seurat object by the block variable
+dat.list <- SplitObject(dat, split.by = "Block")
+
+# Normalize data and find variable features for each block separately
+dat.list <- lapply(X = dat.list, FUN = function(x) {
+  x <- NormalizeData(x)
+  x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+  return(x)
+})
+
+# Find integration anchors (using top 15 dimensions)
+dat.anchors <- FindIntegrationAnchors(object.list = dat.list, dims = 1:15) # Set to 15.
+
+# Perform data integration
+dat.integrated <- IntegrateData(anchorset = dat.anchors, dims = 1:30, k.weight = 50)
+
+# Set the integrated assay as the default assay
+DefaultAssay(dat.integrated) <- "integrated"
+
+
+saveRDS(dat.integrated, file = "clean_data_manuscript/seurat_object/QC_normalized_data_200um_SVA_CCA.rds")
+
+```
+
+
+Run PCA and UMAP on the CCA corrected data. 
+```{r CREATE a UMAP TO LOOK AT}
+
+set.seed(428)
+# Scale data and perform PCA for dimensionality reduction
+dat.integrated <- ScaleData(dat.integrated)
+dat.integrated <- RunPCA(dat.integrated, npcs = 30)
+
+# Visualize data using UMAP and check for batch effects
+dat.integrated <- RunUMAP(dat.integrated, dims = 1:30)
+
+# Find neighbors and clusters for the integrated dataset
+dat.integrated <- FindNeighbors(dat.integrated, reduction = "pca", dims = 1:30)
+dat.integrated <- FindClusters(dat.integrated, resolution = 1.5)
+# resolution pull out infected from uninfected male. # I need to talk to someone who specializes in this type of analysis
+
+# Visualize clusters and batch (block variable) on UMAP
+p1 <- DimPlot(dat.integrated, reduction = "umap", group.by = "seurat_clusters", label = TRUE)
+p2 <- DimPlot(dat.integrated, reduction = "umap", group.by = "Block")
+p3 <- DimPlot(dat.integrated, reduction = "umap", group.by = "Group")
+p4 <- DimPlot(dat.integrated, reduction = "umap", group.by = "Type")
+p5 <- DimPlot(dat.integrated, reduction = "umap", group.by = "Liver_zone")
+p1 + p2 + p3 + p4 + p5
+
+```
+
+Now using this for final figure. Prelimilary look. 
+
+########## GW QUESTION ############
+
+What is the the MNN of this process? Or is this just CCA?
+
+#########
+
+#https://broadinstitute.github.io/2020_scWorkshop/batch-correction-lab.html#additional-exploration-seurat-3
+
+########################################################################################################################################
+
+# STEP 3: UNSUPERVISED CLUSTERING ANALYSIS 
+
+########################################################################################################################################
+
+Creating a cluster analysis that I can believe in for the cluster analysis in the manuscript. 
+
+# CREATE UMAP 
+Official figures for manuscript. 
+```{r Here you set the resolution of clusters which defines how many clusters are depicted on the graph}
+
+dat.integrated.clusters <- FindClusters(dat.integrated, resolution = 1.5)
+
+# Define a publication-ready color palette, such as the Nature palette
+nature_palette <- RColorBrewer::brewer.pal(n = 8, name = "Set2")
+
+# Update your DimPlot code
+umap_clusters <- DimPlot(dat.integrated.clusters, 
+                         reduction = "umap", 
+                         group.by = "seurat_clusters", 
+                         label = FALSE) +
+    scale_color_manual(values = nature_palette) +  # Apply the color palette
+    labs(x = "UMAP 1", y = "UMAP 2", title = NULL) + 
+    coord_fixed(ratio = 1.5) +
+    # Remove the title
+    theme(legend.position = "right", 
+          legend.key.size = unit(0.5, "cm"), 
+          axis.title = element_text(size = 12),  # Adjust text sizes for readability
+          axis.text = element_text(size = 10),
+          legend.title = element_text(size = 10),
+          legend.text = element_text(size = 9))
+
+ggsave(umap_clusters, file = "figs_manuscript/UMAPS/UMAP_with_clusters_1.5res.pdf", width = 3, height = 2.5)
+
+```
+
+
+
+# CREATE STACKED BARPLOTS:
+Targeting the groups of interest for the manuscript (Group x Infection & Liver Zone)
+
+### Beautification & filtering
+
+```{r Format the stacked barplots for colors}
+
+# CREATE A NEW VARIABLE
+dat.integrated.clusters@meta.data$phenotype_treatmentgroup <- paste(dat.integrated.clusters@meta.data$Treatment, dat.integrated.clusters@meta.data$Group, sep = "_")
+
+### ADD LABELS
+dat.integrated.clusters@meta.data <- dat.integrated.clusters@meta.data %>%
+    mutate(
+        phenotype_treatmentgroup = case_when(
+            phenotype_treatmentgroup == "infected_F" ~ "Py spz & F",
+            phenotype_treatmentgroup == "infected_M" ~ "Py spz & M",
+            phenotype_treatmentgroup == "infected_ORX" ~ "Py spz & ORX",
+            phenotype_treatmentgroup == "uninfected_F" ~ "Mock & F",
+            phenotype_treatmentgroup == "uninfected_M" ~ "Mock & M",
+            phenotype_treatmentgroup == "uninfected_ORX" ~ "Mock & ORX",
+            TRUE ~ phenotype_treatmentgroup  # Keep original value if no match
+        )
+    )
+
+# CUSTOMIZE COLORS
+
+# Custom color scheme
+custom_colors <- list(
+  # Colors for Treatment levels
+  Treatment = c("infected" = "orange", "uninfected" = "grey23"),
+  
+  # Colors for Group levels
+  Group = c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF"),
+  
+  # Colors for Liver Zone levels
+  Liver_zone = c("PP" = "#006400", "PC" = "#91D1C2FF", "IZ" = "#00A087FF"),
+  
+  # Colors for phenotype_zonegroup, adjusting alpha based on Group
+  phenotype_zonegroup = c(
+    "PP_F"   = alpha("#941751", 1),  # F base color with alpha
+    "IZ_F"   = alpha("#941751", 0.7),  
+    "PC_F"   = alpha("#941751", 0.3),
+    "PP_M"   = alpha("#005493", 1),  # M base color with alpha
+    "IZ_M"   = alpha("#005493", 0.7),  
+    "PC_M"   = alpha("#005493", 0.3),
+    "PP_ORX" = alpha("#52B2BF", 1),  # ORX base color with alpha
+    "IZ_ORX" = alpha("#52B2BF", 0.7),  
+    "PC_ORX" = alpha("#52B2BF", 0.3)
+  ),
+  
+  # Colors for phenotype_treatmentgroup, adjusting alpha based on Group
+  phenotype_treatmentgroup = c(
+    "Py spz & F"     = alpha("#941751", 1),  # F infected
+    "Py spz & M"     = alpha("#005493", 1),  # M infected
+    "Py spz & ORX"   = alpha("#52B2BF", 1),  # ORX infected
+    "Mock & F"   = alpha("#941751", 0.3),  # F uninfected
+    "Mock & M"   = alpha("#005493", 0.3),  # M uninfected
+    "Mock & ORX" = alpha("#52B2BF", 0.3)   # ORX uninfected
+  )
+)
+
+# View the custom colors
+custom_colors
+
+```
+
+### Combine the graphs for the manuscript
+
+Focus on INFECTION, SEX & ZONE
+```{r With patchwork to make manuscript}
+# Define your groups of interest
+groups_of_interest <- c("phenotype_treatmentgroup", "Liver_zone")
+
+# Initialize a list to hold the plots
+plots <- list()
+
+# Loop over each group of interest
+for (group in groups_of_interest) {
+  
+  # Ensure the column exists in dat.integrated.clusters@meta.data
+  if (group %in% colnames(dat.integrated.clusters@meta.data)) {
+    
+    # Update cluster_data with the current group
+    cluster_data <- dat.integrated.clusters@meta.data[, c("seurat_clusters", group)]
+    colnames(cluster_data)[2] <- "group_value"  # Rename to a generic column name for grouping
+    
+    # Calculate counts and proportions by cluster and group
+    cluster_data <- cluster_data %>%
+      group_by(seurat_clusters, group_value) %>%
+      summarise(count = n(), .groups = 'drop') %>%  # Drop groups after summarizing
+      mutate(proportion = count / sum(count))  # Compute proportions within each cluster
+    
+    # Select the appropriate custom color palette based on the group
+    if (group == "phenotype_treatmentgroup") {
+      color_palette <- custom_colors$phenotype_treatmentgroup
+    } else if (group == "Liver_zone") {
+      color_palette <- custom_colors$Liver_zone
+    } else {
+      color_palette <- NULL  # Default to no custom colors if not matched
+    }
+    
+    # Create a stacked bar plot with the correct percentages and custom colors
+    plot <- ggplot(cluster_data, aes(x = as.factor(seurat_clusters), y = proportion, fill = group_value)) +
+      geom_bar(position = "fill", stat = "identity") +
+      #geom_text(aes(label = scales::percent(proportion, accuracy = 1)),
+                #position = position_fill(vjust = 0.5)) +
+      labs(x = "Clusters", y = "Proportion", fill = group) +
+      theme_classic() +
+      theme(legend.title = element_blank()) +
+      #ggtitle(paste("Stacked Bar Plot for", group)) +
+      scale_fill_manual(values = color_palette) +
+      scale_y_continuous(expand = expansion(mult = c(0, 0)))  # Remove space between bars and x-axis
+    
+    # Store the plot in the list
+    plots[[group]] <- plot
+    
+  } else {
+    message(paste("Warning: Column", group, "not found in the metadata."))
+  }
+}
+
+# Combine plots side by side
+combined_plot <- plots[[1]] + plots[[2]] + plot_layout(ncol = 2)  # Arrange in 1 row and 2 columns
+
+combined_plot
+# Save the combined plot
+ggsave("figs_manuscript/UMAPS/Stack_barplot_row.png", combined_plot, width = 8.5, height = 3.5)
+
+```
+
+
+# CREATE HEATMAP OF LEADING GENES
+Figure in manuscript
+
+```{r Pull top features from each cluster for a heatmap}
+
+# Define a publication-ready color palette, such as the Nature palette
+nature_palette <- RColorBrewer::brewer.pal(n = 8, name = "Set2")  # or "Set2" for a stronger color contrast
+
+col_fun = colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(100)
+
+dat.markers <- FindAllMarkers(dat.integrated.clusters, only.pos = TRUE)
+
+dat.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+
+# Create heatmap with custom color gradient
+heatmap_topgenes <- DoHeatmap(dat.integrated.clusters, 
+                              features = top10$gene,
+                              group.colors = nature_palette) + 
+    NoLegend() +
+    scale_fill_gradientn(colors = col_fun)  # Apply custom color function
+
+
+ggsave(file = "figs_manuscript/UMAPS/Top_features_by_cluster_1.5res.png", width = 5, height = 5)
+```
+
+########################################################################################################################################
+
+# STEP 4: PANELS OF UMAPS + GENES OF INTEREST
+
+########################################################################################################################################
+
+Create now the basic representative UMAP by different groups for the paper to show clear representation of different effect. 
+```{r Create a UMAP for all comparisons of interest - Groups}
+
+rm(list = ls())
+
+dat.integrated <- readRDS("clean_data_manuscript/seurat_object/QC_normalized_data_200um_SVA_CCA.rds")
+
+DefaultAssay(dat.integrated) <- "integrated" # RESET just in case. 
+
+# Define custom colors to match the unique levels in your metadata
+custom_colors <- list(
+  Treatment = c("infected" = "orange", "uninfected" = "grey23"),  # Colors for Treatment levels
+  Block = c("1" = "grey10", "2" = "grey40", "3" = "grey80"),  # Existing colors for Block
+  Type = c("schizont" = "black", "bystander" = "#FFC20A", "mock" = "grey"),  # Colors for Type levels
+  Group = c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF"),
+  ROI_size = c("200um" = "#290916", "100um" = "#67032f", "75um" = "#a1045a","50um" = "#BE93D4"),
+  Liver_zone = c("PP" = "#006400", "PC" = "#91D1C2FF", "IZ" = "#00A087FF")
+)
+
+
+# Function to create UMAP plots
+create_umap_plot <- function(data, group_by, title) {
+  DimPlot(data, reduction = "umap", group.by = group_by, label = FALSE) +
+    scale_color_manual(values = custom_colors[[group_by]]) +  # Use specific color mapping
+    coord_fixed(ratio = 1.5) +
+    ggtitle(title) +
+    labs(x = "UMAP 1", y = "UMAP 2") +
+    theme(legend.position = "right", legend.key.size = unit(0.5, "cm"))
+}
+
+# Create UMAP plots for Treatment, Block, Type, and Group
+Treatment_umap <- create_umap_plot(dat.integrated, "Treatment", "Treatment")
+Block_umap <- create_umap_plot(dat.integrated, "Block", "Block")
+Type_umap <- create_umap_plot(dat.integrated, "Type", "Infection Status")
+Group_umap <- create_umap_plot(dat.integrated, "Group", "Group")
+ROI_size_umap <- create_umap_plot(dat.integrated, "ROI_size", "ROI size")
+Liver_zone_umap <- create_umap_plot(dat.integrated, "Liver_zone", "Liver Zone")
+
+# Combine the plots using cowplot
+combined_plot <- plot_grid(Treatment_umap, Block_umap, Type_umap, Group_umap, ROI_size_umap, Liver_zone_umap,
+                            ncol = 3, 
+                            align = "hv",  # Aligns plots vertically and horizontally
+                            rel_heights = c(1, 1, 1, 1),  # Equal heights for all plots
+                            rel_widths = c(1, 1))  # Equal widths for all plots
+
+# Print the combined plot
+print(combined_plot)
+
+# Define the path for saving the plot
+output_folder <- "figs_manuscript/UMAPS"
+output_title <- "All_umaps_colors_by_features.png"  # You can customize the title here
+output_path <- file.path(output_folder, output_title)
+
+# Save the combined UMAP plot
+ggsave(filename = output_path, plot = combined_plot, width = 12, height = 7, dpi = 300)
+
+# Print confirmation
+cat("UMAP plot saved to:", output_path, "\n")
+
+```
+
+# UMAPS FOR MANUSCRIPT
+
+Setting upt he function
+```{r Set up the function and save output}
+
+output_folder <- "figs_manuscript/UMAPS" # Define the path for saving the plot
+
+# Function to create UMAP plots
+create_umap_plot_genes <- function(data, gene_of_interest, title) { 
+  Seurat::FeaturePlot(data, features = gene_of_interest, pt.size = 1) + 
+    scale_color_gradientn(colors = c("#FFFFBF", "#E08214", "#762A83","#762A83"), 
+                          values = scales::rescale(c(0, 0.4, 0.8, 1))) + 
+    coord_fixed(ratio = 1.5) +
+    ggtitle(title) +
+    labs(x = "UMAP 1", y = "UMAP 2") +
+    theme(
+      legend.position = "right",
+      legend.key.size = unit(0.5, "cm")
+    ) 
+}
+
+```
+
+# FIGURE SEX @ STEADY STATE
+```{r Sex at Steady State figure}
+#-----------------------------------------------------------------------------------------------------
+# GROUPING OF GENES OF INTEREST
+# Genes related to sex
+
+Group_colors <- c("F" = "#941751", "M" = "#005493", "ORX" = "#52B2BF")
+
+Cyp7b1 <- create_umap_plot_genes(dat.integrated, "Cyp7b1", "Cyp7b1") # Up in M
+Cyp2b13 <- create_umap_plot_genes(dat.integrated, "Cyp2b13", "Cyp2b13") # Up in F & ORX
+
+# Make a grid for this variable of interest
+Sex_plot <- plot_grid(Group_umap, Cyp7b1, Cyp2b13,
+                            ncol = 3, 
+                            align = "hv",  # Aligns plots vertically and horizontally
+                            rel_heights = c(1, 1, 1, 1),  # Equal heights for all plots
+                            rel_widths = c(1, 1))  # Equal widths for all plots
+
+Sex_plot
+
+output_title <- "Sex_combined_umap_plot.png"  # You can customize the title here
+ggsave(filename = file.path(output_folder, output_title), plot = Sex_plot, width = 10, height = 3.5, dpi = 300)
+
+
+```
+
+
+# FIGURE ZONATION 
+```{r Zonation Figure}
+#-----------------------------------------------------------------------------------------------------
+# Genes related to regions of interest
+Cyp2e1 <- create_umap_plot_genes(dat.integrated, "Cyp2e1", "Cyp2e1") # Up in PP
+Cyp2f2 <- create_umap_plot_genes(dat.integrated, "Cyp2f2", "Cyp2f2") # Up in PC
+Glul <- create_umap_plot_genes(dat.integrated, "Glul", "Glul") # Up in PP
+
+Zone_plot <- plot_grid(Liver_zone_umap, Cyp2e1, Glul, Cyp2f2,
+                            ncol = 4, 
+                            align = "hv",  # Aligns plots vertically and horizontally
+                            rel_heights = c(1, 1, 1, 1),  # Equal heights for all plots
+                            rel_widths = c(1, 1))  # Equal widths for all plots
+
+output_title <- "Zone_combined_umap_plot.png" 
+ggsave(filename = file.path(output_folder, output_title), plot = Zone_plot, width = 15, height = 3.5, dpi = 300)
+
+```
+
+# FIGURE BYSTANDER
+```{r Infection & Bystander Figure}
+#-----------------------------------------------------------------------------------------------------
+# Genes that should be up in Infection
+Irf7 <- create_umap_plot_genes(dat.integrated, "Irf7", "Irf7") # Type I
+CXCL9 <- create_umap_plot_genes(dat.integrated, "Cxcl9", "Cxcl9") # Type II
+Saa1 <- create_umap_plot_genes(dat.integrated, "Saa1", "Saa1") # Inflammation
+
+
+Infection_plot <- plot_grid(Type_umap, Irf7, CXCL9, Saa1,
+                            ncol = 4, 
+                            align = "hv",  # Aligns plots vertically and horizontally
+                            rel_heights = c(1, 1, 1, 1),  # Equal heights for all plots
+                            rel_widths = c(1, 1))  # Equal 
+
+output_title <- "Infection_umap_plot.png" 
+ggsave(filename = file.path(output_folder, output_title), plot = Infection_plot, width = 15, height = 3.5, dpi = 300)
+
+```
+
+###### ALL DONE ######

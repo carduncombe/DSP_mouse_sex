@@ -1,0 +1,310 @@
+---
+title: "Creating the Final cleaned samples list for DE analysis"
+author: "Caroline_Duncombe"
+date: "2024-11-13"
+output: html_document
+---
+
+PART I: DSP Analysis on GeoMX data 
+
+Script will take DCC files and convert to normalized, batch corrected data for downstream applications. 
+
+Step 1: Filter data based on Nanostring filter. 
+Step 2: Normalize with this filtered data.
+Step 3: Filter to 200um ROI (exclude the smaller ROIs).
+Step 4: Batch correct with SVA method. 
+
+########################################################################################################################################
+
+# LOAD IN DATA
+
+########################################################################################################################################
+
+Load
+```{r load the libraies }
+
+library(here)
+library(GeomxTools)
+library(CellMembrane)
+library(DESeq2)
+library(Seurat)
+library(dplyr)
+library(ComplexHeatmap)
+library(tibble)
+library(sva)
+
+#load or download the 'usethis' package.
+pacman::p_load("usethis")
+pacman::p_load(BiocManager, devtools)
+
+rm(list = ls())
+```
+
+Run this if the Cell membrane token is expired:
+```{r Load Cell Membrane if necessary}
+if (! ("pacman" %in% installed.packages()[,"Package"])) {
+  install.packages('pacman')
+}
+#load or download the 'usethis' package.
+pacman::p_load("usethis")
+
+
+usethis::create_github_token()
+
+gitcreds::gitcreds_set()
+
+pacman::p_load(BiocManager, devtools)
+
+# Make sure to update your Rprofile to include Bioconductor repos, such as adding this line to ~/.Rprofile:
+local({options(repos = BiocManager::repositories())})
+
+#Latest version:
+devtools::install_github(repo = 'bimberlabinternal/cellmembrane', dependencies = TRUE, upgrade = 'always')
+
+```
+
+Load in the DCC files 
+```{r Load the datafile and create Nanostring Object}
+
+download_directory <- here::here('raw_data/dcc_files/DCC-20240715')
+
+  # Point the readNanoStringGeoMxSet function to the directory containing DCC files from this plate
+dccFiles <- dir(download_directory, pattern = "\\w*.dcc$", full.names = TRUE)
+#dccFiles <- download_directory
+  
+  # Point to the pkc file (kind of like a reference atlas for nanostring)
+  pkcFile <- "raw_data/pkc/Mm_R_NGS_WTA_v1.0.pkc"
+  
+  # Point to the annotation file (metadata for the samples)
+  annotationFile <- "raw_data/meta_data/annotation_data_final.xlsx"
+  
+  myData <- suppressWarnings(readNanoStringGeoMxSet(dccFiles = dccFiles,
+                                                    pkcFiles = pkcFile,
+                                                    phenoDataFile = annotationFile,
+                                                    phenoDataSheet = "Master",
+                                                    # this is the excel sheet’s name
+                                                    phenoDataDccColName = "SAMPLE_ID",
+                                                    # these are headers/column names in the excel file
+                                                    protocolDataColNames = c("SegmentDisplayName", "RawReads", "unique_ID") # Add columns about sequencing data here. 
+                                                    ))
+  
+```
+
+########################################################################################################################################
+
+# STEP 1: Filter out the files that failed based on the nanostring criteria. 
+
+########################################################################################################################################
+
+
+After reading in the object, we will do a couple of QC steps.
+
+Shift all 0 counts by 1
+Flag low quality ROIs
+Flag low quality probes
+Remove low quality ROIs and probes
+
+```{r Filter out myData to the recommended Nanostring filters}
+
+# Create a new object o play with
+demoData <- myData
+
+
+#Probe QC: Filter out probes that did not work. 
+demoData <- setBioProbeQCFlags(demoData,
+                    qcCutoffs=list(minProbeRatio=0.1,
+                                   percentFailGrubbs=20),
+                   removeLocalOutliers=FALSE)
+
+probeflag <- featureData(demoData)[["QCFlags"]]    # no probes failed so good to go.
+
+
+# ROI QC: Use the Nanostring DC flag to create a frame that has flags per ROI
+demoData <- setSegmentQCFlags(demoData, 
+                  qcCutoffs=list(minSegmentReads=1000, 
+                                 percentAligned=80, 
+                                 percentStitched=80,
+                                 percentTrimmed=80,
+                                 percentSaturation=50,
+                                 minNegativeCount=0, 
+                                 maxNTCCount=1000,
+                                 minArea=1800,
+                                 minNuclei=2))
+
+demoflag <- protocolData(demoData)[["QCFlags"]]    # 5 samples failed
+
+QCResultsIndex <- which(apply(protocolData(demoData)[["QCFlags"]], 
+                              1L , function(x) sum(x) == 0L))
+
+# Extract QC flags per ROI (5 samples failed in this case)
+demoflag <- protocolData(demoData)[["QCFlags"]]
+
+# pull out the failed values: 
+failed <- rownames(demoflag)[apply(demoflag, 1, any)]
+
+qc_dat <- protocolData(demoData)
+qc_dat <- qc_dat@data
+
+are_equal <- qc_dat$Raw == qc_dat$RawReads
+
+QCPassed <- demoData[, QCResultsIndex]
+dim(QCPassed) 
+
+```
+
+############# FILTERED SAMPLES #################
+Final analysis includes
+20175 Features (genes)
+273 ROIs 
+
+Originally 278 samples and then filtered the 5 failed samples out. 
+
+```{r What samples failed?}
+
+# Print the message along with the contents of the 'failed' variable
+print(paste("These samples failed and should be filtered out:", failed))
+
+#Five failed: going to filter out the dataset for only those that passed:
+
+#[1] "These samples failed and should be filtered out: DSP-1001660018808-A-B05.dcc"
+#[2] "These samples failed and should be filtered out: DSP-1001660018808-A-B08.dcc"
+#[3] "These samples failed and should be filtered out: DSP-1001660018808-A-G08.dcc"
+#[4] "These samples failed and should be filtered out: DSP-1001660021036-D-F12.dcc"
+#[5] "These samples failed and should be filtered out: DSP-1001660021037-B-G11.dcc"
+
+# 2/5 were connected to a 200um ROIs
+
+```
+
+Make the Seurat Object with the passing QC'd data:
+```{r Create Seurat Object}
+
+# Aggregate counts (for the WTA, this just aggregates negative probes)
+  target_myData <- aggregateCounts(QCPassed)
+  
+  # The data won't export unless a normalization method is run, but I only want the raw data
+  # Using for housekeeping genes. 
+  target_myData <- normalize(target_myData, norm_method = "hk", fromElt = "exprs", toElt = "hk_norm")
+  
+  # Export the raw data to a Seurat object
+  seuratObj.exp <- GeomxTools::as.Seurat(target_myData, normData = "exprs", forceRaw = TRUE)
+
+seuratObj.play <-  seuratObj.exp
+# playing with Seurat
+count_dat_play <- Seurat::GetAssayData(seuratObj.exp, layer = "counts") # could add meta data to this. 
+
+```
+
+########################################################################################################################################
+
+# Step 2: Normalize data with Cell Membrane
+
+########################################################################################################################################
+
+
+```{r Normalize with CellMembrane and create Seurat object}
+
+# Normalization with CellMembrane - there is the normalization process and there is not.
+# Fit a model hat is sensitive to the things that you want to take into account. 
+# This does a  library sized tranformation - transcript per million reads per library.
+# This is only transcripts that got aligned. 
+# Seurat does per 100,000 log2 or log - see what seurat
+
+#####
+
+seuratObj.exp <- NormalizeData(seuratObj.exp)
+seuratObj.exp <- FindVariableFeatures(seuratObj.exp, nfeatures = 5000) #5000 is completely made up
+seuratObj.exp <- ScaleData(seuratObj.exp)
+seuratObj.exp <- RunPCA(seuratObj.exp)
+
+# Could review the result of the bulk data - what is the same and the spatially informed liver. 
+# What is the same versus different. 
+
+saveRDS(seuratObj.exp, file = "clean_data_manuscript/seurat_object/QC_normalized_data.rds")
+
+```
+########################################################################################################################################
+
+# Step 3: Filter to 200um ROIs
+
+########################################################################################################################################
+
+
+Save the new dataset.
+```{r Create datatable of samples that are omitted}
+
+seuratObj.exp_200 <- subset(seuratObj.exp, ROI_size == "200um")
+
+
+table(seuratObj.exp_200@meta.data$Group, seuratObj.exp_200@meta.data$Liver_zone, seuratObj.exp_200@meta.data$Type)
+
+
+saveRDS(seuratObj.exp_200 , file = "clean_data_manuscript/seurat_object/QC_normalized_data_200um.rds")
+
+
+```
+
+Now down to 213 samples to include in the downstream analysis
+#Now 213 samples!
+There should be 9 for schizont & bystander, and 6 for mock. 
+
+Two samples at 200um were filtered out based on a QC criteria:
+*a M PC Inf on Block 1 & ORX PP Inf on block 2. 
+*Never collected a M IZ on block 1 (could only find 1!) during ROI selection. 
+
+########################################################################################################################################
+
+# Step 4: Batch correct for the contribution of block.
+
+########################################################################################################################################
+
+SVA package is the final method to be applied. 
+
+```{r SVA package}
+
+rm(list = ls())
+
+dat <- readRDS("clean_data_manuscript/seurat_object/QC_normalized_data_200um.rds") 
+
+# Load in the count matrix for batch correction
+gene_dat <- GetAssayData(dat, assay = "GeoMx", layer = "counts") 
+bk.dat <- as.matrix(t(gene_dat))
+
+# Create a usable dataframe for SVA by making it a matrix. 
+count_matrix <- as.matrix(gene_dat)
+all(colnames(count_matrix) == rownames(dat@meta.data)) # Check that columns and row match
+
+# Making batch variable
+batch <- as.factor(dat@meta.data$Block)
+
+#Making the covariate matrix
+sex <- dat@meta.data$Group
+infection <- dat@meta.data$Type
+covariate_matrix <-data.frame(sex = sex, infection = infection)
+
+#check if all looks good:) the factors look good
+                               
+# Now run the SVA package for batch corrections with the count matrix in the pro
+adjusted <- ComBat_seq(count_matrix, batch=batch, group= NULL, covar_mod = covariate_matrix)
+
+bk.dat.adjusted <- as.matrix(adjusted)
+dim(bk.dat.adjusted) # the sample-by-gene raw count matrix of bulk RNAseq expression.
+
+# Now add a new list into Seurat hodling the SUV_adusted matrix object. 
+dat[["SVA_batchCorrected"]] <- CreateAssayObject(counts = bk.dat.adjusted)
+
+#Check that this was inputted correctly:
+# Check if the new assay "SVA_batchCorrected" exists
+    # Get the counts from the new assay
+svacounts <- GetAssayData(dat, assay = "SVA_batchCorrected", slot = "counts") #pulling from object
+print(head(svacounts)) # Checking that matrix is there. 
+
+saveRDS(dat, file = "clean_data_manuscript/seurat_object/QC_normalized_data_200um_SVA.rds")
+
+```
+
+Output is the final, normalized, QC filtered, and batch corrected seurat object!
+
+########### ALL DONE! ##############
+
+

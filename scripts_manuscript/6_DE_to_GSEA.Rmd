@@ -1,0 +1,448 @@
+---
+title: "6_DE_to_GSEA"
+author: "Caroline_Duncombe"
+date: "2024-10-24"
+output: html_document
+---
+
+###### CAROLINE TO UPDATE FOR FINAL VERION ##########
+PART VI: DSP Analysis on GeoMX data 
+
+Goal of this script is to create the final GSEA dataset used for downstream visualization. 
+
+For this paper, I will focus on two ontology databases based on the liturature: Hallmark and KEGG.
+
+One other one could be employed GO:BP - but that might just be too complicated. And I don't really need it here. 
+
+Working draft - no need for GW to check.
+
+########################################################################################################################################
+
+# STEP 1: LOAD IN DATA
+
+########################################################################################################################################
+
+```{r load the libraies }
+library(SEARchways)
+library(BIGpicture)
+library(dplyr)
+library(tibble)
+library(limma)
+library(ggplot2)
+library(circlize)
+library(stringr)
+library(RColorBrewer)
+library(here)
+library(readr)
+
+#load or download the 'usethis' package.
+pacman::p_load("usethis")
+pacman::p_load(BiocManager, devtools)
+
+rm(list = ls())
+
+DE_nobystander_all <- read_csv("clean_data/DE/DE_nobystander_all_SVA_interaction_model.csv")
+
+table(DE_nobystander_all$contrast)
+```
+
+```{r ORDER SAMPLES & RUN GSEA}
+
+set.seed(123)
+
+ordered_listall <- DE_nobystander_all %>%  # Include pvalue for use in mutation
+  mutate(metric_for_use = log2FoldChange) %>% 
+  select(contrast, gene, metric_for_use) %>%# Use log10 for p-values
+  arrange(contrast, metric_for_use)  # Arrange by contrast and the new metric
+
+
+# Question is the symbol a useful fromm here?
+#Hallmark
+gsea_listall_H <- BIGsea(gene_df=ordered_listall, category="H", subcategory = "", ID="SYMBOL", species = "mouse", nperm = 1000000) %>% mutate(database = "hallmark")
+
+gsea_listall_K <- BIGsea(gene_df=ordered_listall, category="C2", subcategory = "CP:KEGG", ID="SYMBOL", species = "mouse", nperm = 1000000) %>% mutate(database = "kegg")
+
+GSEA_output_H_K <- rbind(gsea_listall_H,gsea_listall_K)
+
+
+saveRDS(GSEA_output_H_K, file = "clean_data/GSEA/GSEA_output_H_K.rds")
+```
+
+Warning for this:
+GroupORX.Liver_zoneIZ
+Warning: There were 2 pathways for which P-values were not calculated properly due to unbalanced gene-level statistic values
+
+GroupORX.Typeschizont
+Warning: There were 4 pathways for which P-values were not calculated properly due to unbalanced gene-level statistic values
+
+Type_schizont_vs_mock
+Warning: There were 1 pathways for which P-values were not calculated properly due to unbalanced gene-level statistic values
+
+GroupORX.Typeschizont
+Warning: There were 3 pathways for which P-values were not calculated properly due to unbalanced gene-level statistic values
+
+Something is off with the ORX by schizont. 
+
+I don't have this issue if
+
+```{r Figuring out why ORX looks bad}
+###### investigating ORX group #####
+
+# two that failed GroupORX.Liver_zoneIZ & GroupORX.Typeschizont
+
+ORX_inv <- DE_nobystander_all %>% dplyr::filter(contrast == "GroupORX.Typeschizont")
+ORX_inv <- DE_nobystander_all %>% dplyr::filter(contrast == "GroupORX.Liver_zoneIZ")
+
+sum(is.na(ORX_inv$log2FoldChange))  # Check for missing log2FoldChange values
+sum(is.na(ORX_inv$gene))            # Check for missing gene names
+sum(is.na(ORX_inv$padj))  
+
+hist(ORX_inv$log2FoldChange, breaks = 50, main = "Distribution of log2 Fold Changes")
+
+ORX_inv <- ORX_inv %>%
+  filter(!is.na(log2FoldChange) & !is.na(gene) & !is.na(padj))
+
+ordered_listall <- ORX_inv %>% select(c("contrast", "gene", "log2FoldChange")) %>%
+  arrange(contrast, log2FoldChange)
+
+
+gsea_listall_H <- BIGsea(gene_df=ordered_listall, category="H", subcategory = "", ID="SYMBOL", species = "mouse")
+pathway_sizes <- sapply(ordered_listall, length)
+
+```
+
+```{r Make bubble plot showing each comparison}
+gsea_list <- gsea_listall_K
+filter_list <- gsea_list %>%
+  mutate(`FDR value`  = case_when(FDR <= 0.01  ~ "< 0.01",
+                              FDR <= 0.05 & FDR > 0.01  ~ "< 0.05",
+                              FDR <= 0.1 & FDR > 0.05  ~ "< 0.1",
+                              FDR <= 0.3 & FDR > 0.1  ~ "< 0.2",
+                              FDR > 0.3 ~ "ns",
+                              ))
+
+all_filter <- filter_list %>% mutate(pathway = gsub("HALLMARK_","", pathway)) %>%
+  mutate(pathway = gsub("_"," ", tolower(pathway))) %>%
+  mutate(pathway = str_replace(pathway, "\\b\\w+\\b", str_to_title))
+
+
+#Basic Plot
+col_fun = colorRamp2(c(-1.5,-1,-0.5,0,0.5,1,1.5),c(rev(brewer.pal(n = 7, name ="RdYlBu"))))
+nes_colors <- scale_color_gradient2(low = "blue", mid = "white", high = "red", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+
+nes_colors <- scale_color_gradient2(low = "#2C7BB6", mid = "#FFFFBF", high = "#D7191C", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+
+```
+
+```{r }
+
+all_filter <- all_filter %>%
+  filter(!is.na(pathway), !is.na(group), !is.na(NES), !is.na(`FDR value`))
+
+## Bubble plot
+plot <- ggplot(all_filter, aes(y = pathway, x = group, color = NES)) +
+  geom_point(aes(size = `FDR value`), alpha = 1.0) +
+  nes_colors +
+  scale_size_manual(values = c(10,8,6,1,0)) +
+  theme_linedraw() + 
+  theme(axis.title = element_blank(),
+        panel.grid.major.y = element_line( linewidth =.1, color="grey"),
+        panel.grid.major.x = element_line( linewidth =.1, color="grey"),
+        legend.position = "left",
+        axis.text.y = element_text(hjust = 0),
+        axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_y_discrete(position = "right")
+
+# Save the plot using ggsave
+ggsave(filename = "figs/GSEA_Bubbleplot/20241023_all_K.png", plot = plot, width = 8, height = 25)
+
+```
+
+```{R BUBBLE PLOT OF JUST THE M vs F Comparison}
+
+gsea_list <- gsea_listall_H %>% dplyr::filter(group == "GroupF.Typeschizont")
+
+filter_list <- gsea_list %>%
+  mutate(`FDR value`  = case_when(FDR <= 0.01  ~ "< 0.01",
+                              FDR <= 0.05 & FDR > 0.01  ~ "< 0.05",
+                              FDR <= 0.1 & FDR > 0.05  ~ "< 0.1",
+                              FDR <= 0.3 & FDR > 0.1  ~ "< 0.2",
+                              FDR > 0.3 ~ "ns",
+                              ))
+
+pathway_list <- c("apoptosis",
+                  "il2 stat5 signaling",
+                  "il6 jak stat3 signaling",
+                  "inflammatory response",
+                  "interferon alpha response",
+                  "interferon gamma response",
+                  "tnfa signaling via nfkb",
+                  "complement",
+                  "androgen response",
+                  "oxidative phosphorylation",
+                  "chemokine signaling pathway",
+                  "cytosolic dnasensing pathway",
+                  "il18 signaling pathway",
+                  "il2 signaling pathway",
+                  "il4 signaling pathway",
+                  "inflammatory response pathway",
+                  "tcell receptor tcr signaling pathway",
+                  "tolllike receptor signaling pathway",
+                  "type ii interferon signaling ifng",
+                  "t cell receptor and costimulatory signaling",
+                  "oxidation by cytochrome p450")
+
+all_filter <- filter_list %>% mutate(pathway = gsub("HALLMARK_","", pathway)) %>%
+  mutate(pathway = gsub("_"," ", tolower(pathway)))  %>% 
+  filter(pathway %in% pathway_list) %>%
+  mutate(pathway = str_replace(pathway, "\\b\\w+\\b", str_to_title))
+
+
+
+
+#Basic Plot
+col_fun = colorRamp2(c(-1.5,-1,-0.5,0,0.5,1,1.5),c(rev(brewer.pal(n = 7, name ="RdYlBu"))))
+nes_colors <- scale_color_gradient2(low = "blue", mid = "white", high = "red", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+
+nes_colors <- scale_color_gradient2(low = "#2C7BB6", mid = "#FFFFBF", high = "#D7191C", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+
+all_filter <- all_filter %>%
+  filter(!is.na(pathway), !is.na(group), !is.na(NES), !is.na(`FDR value`))
+
+## Bubble plot
+plot <- ggplot(all_filter, aes(y = pathway, x = group, color = NES)) +
+  geom_point(aes(size = `FDR value`), alpha = 1.0) +
+  nes_colors +
+  scale_size_manual(values = c(10,8,6,1,0)) +
+  theme_linedraw() + 
+  theme(axis.title = element_blank(),
+        panel.grid.major.y = element_line( linewidth =.1, color="grey"),
+        panel.grid.major.x = element_line( linewidth =.1, color="grey"),
+        legend.position = "left",
+        axis.text.y = element_text(hjust = 0),
+        axis.text.x = element_blank())+
+  scale_y_discrete(position = "right")
+
+print(plot)
+
+ggsave(filename = "figs/GSEA_Bubbleplot/all_H_GroupF.Typeschizont.png", plot = plot, width = 4, height = 4)
+```
+
+
+############### TRYING ssGSEA ############
+
+```{r ssgsea2.0}
+
+library(dplyr)
+library(GSVA)
+library(GSEABase)
+
+dat_SUV <- readRDS("clean_data/seurat_object/normalized_data_QC_filtered_samples_SVA_normalization.rds")
+
+dat <- GetAssayData(dat_SUV, assay = "SVA_batchCorrected", slot = "counts")
+
+###############
+# Convert gene_matrix to a data frame and add a 'Description' column
+gene_matrix <- as.data.frame(dat) %>%
+  rownames_to_column(var = "Name") %>%
+  mutate(Description = "")  # Add an empty description column
+
+# Set the proper GCT structure
+# The first row should be "#1.2"
+gct_header <- "#1.2"  # GCT version
+n_genes <- nrow(gene_matrix)  # Number of genes
+n_samples <- ncol(gene_matrix) - 2  # Number of samples (excluding Name and Description)
+
+# Create the GCT header
+gct_dim <- paste(n_genes, n_samples)  # Create dimension string
+
+# Combine all parts into a single character vector
+gct_data <- c(gct_header, gct_dim, 
+               paste(gene_matrix$Name, gene_matrix$Description, sep = "\t"), 
+               apply(gene_matrix[, -c(1, 2)], 1, function(row) paste(row, collapse = "\t")))
+
+# Step 2: Write to a GCT File
+gct_file_path <- "path/to/your/output_file.gct"  # Specify your output file path
+writeLines(gct_data, con = gct_file_path)
+
+
+
+##############
+
+# Read the GMT file
+IFNG <- getGmt("/Users/carduncombe/Downloads/HALLMARK_INTERFERON_GAMMA_RESPONSE.v2024.1.Mm.gmt")
+IFNA <- getGmt("/Users/carduncombe/Downloads/HALLMARK_INTERFERON_ALPHA_RESPONSE.v2024.1.Mm.gmt")
+
+################################################################################################################
+rm(list=ls())
+if (!require("pacman")) install.packages ("pacman")
+
+## ##########################################################
+##  define parameters below:
+## ##########################################################
+
+## ssGSEA / PTM-SEA parameters
+
+input.ds            = "path/to/your/output_file.gct"
+gene.set.databases  = IFNG
+sample.norm.type    = "rank"              ## "rank", "log", "log.rank", "none" 
+weight              = 0.75                ## value between 0 (no weighting) and 1 (actual data counts)
+statistic           = "area.under.RES"    ## "Kolmogorov-Smirnov"
+output.score.type   = "NES"               ## 'ES' or 'NES'
+nperm               = 1e3                 ## No. of permutations
+min.overlap         = 10                  ## minimal overlap between gene set and data
+correl.type         = "z.score"           ## 'rank', 'z.score', 'symm.rank'
+par                 = T                   ## use 'doParallel' package?
+spare.cores         = 1                   ## No. of cores to leave idle
+export.signat.gct   = T                   ## if TRUE gene set GCT files will be exported 
+extended.output     = T                   ## if TRUE the GCT files will contain stats on gene set overlaps etc.  
+
+
+## ##########################################################
+##  Load datasets:
+## ##########################################################
+
+
+if (!require("devtools", quietly = TRUE)){
+  install.packages("devtools")
+}
+devtools::install_github("nicolerg/ssGSEA2")
+
+library(ssGSEA2)
+
+
+## run ssGSEA
+gsea.res <- run_ssGSEA2(input.ds, 
+                        gene.set.databases=gene.set.databases, 
+                        sample.norm.type=sample.norm.type, 
+                        weight=weight, 
+                        statistic=statistic,
+                        output.score.type = output.score.type,
+                        nperm  = nperm, 
+                        min.overlap  = min.overlap,
+                        correl.type = correl.type,
+                        output.prefix = paste(i),
+                        par=par, 
+                        spare.cores=spare.cores,
+                        param.file=F,
+                        export.signat.gct = export.signat.gct,
+                        extended.output = extended.output)
+
+readLines(gct_file_path)
+```
+
+```{r This kind of works}
+
+library(Seurat)
+library(cmapR)
+library(dplyr)
+
+# Step 1: Extract the expression matrix from the Seurat object
+gene_matrix <- GetAssayData(dat_SUV, assay = "SVA_batchCorrected", slot = "counts") # Extract counts matrix
+gene_matrix <- as.matrix(gene_matrix) 
+
+
+# Step 2: Retrieve and prepare metadata for column names
+meta_data <- dat_SUV@meta.data
+
+# Optionally select specific metadata columns to include in the column names
+# For example, we'll use 'Scan_Name' and 'ROI_Label' to annotate the columns
+col_meta <- meta_data[, c("Group", "Type","ROI_size")]
+col_meta <- apply(col_meta, 1, paste, collapse = "_")  # Combine metadata columns into a single string for each column
+
+# Step 3: This method instead, create row and column annotation data frames
+cdesc <- data.frame(id=colnames(gene_matrix), type=col_meta)
+
+# Step 4: Create the GCT object with annotations
+my_new_ds_with_annotations <- new("GCTX", mat=gene_matrix, cdesc=cdesc)
+
+# Check the GCT object with annotations
+print(my_new_ds_with_annotations)
+
+temp <- cmapR::write_gct(my_new_ds_with_annotations, ofile = "/Users/carduncombe/Downloads/newfolder/")
+
+# Step 3: Run ssGSEA2 with the GCT file
+ # Use the file path you just created
+res = run_ssGSEA2("/Users/carduncombe/Downloads/newfolder_n251x19963.gct",
+                  output.prefix = "example",
+                  gene.set.databases = "/Users/carduncombe/Downloads/HALLMARK_INTERFERON_GAMMA_RESPONSE.v2024.1.Mm.gmt",
+                  output.directory = "/tmp",
+                  sample.norm.type = "none", # What shoudl this be set to?
+                  weight = 0, 
+                  correl.type = "rank", 
+                  statistic = "Kolmogorov-Smirnov", # What should this be set to?
+                  output.score.type = "NES", 
+                  nperm = 1000, 
+                  min.overlap = 5, 
+                  extended.output = TRUE, 
+                  global.fdr = FALSE,
+                  log.file = "/tmp/run.log")
+
+temp <- res$HALLMARK_INTERFERON_GAMMA_RESPONSE[[1]]
+
+head(res$HALLMARK_INTERFERON_GAMMA_RESPONSE[[1]])
+
+saveRDS(res, file = "clean_data/testing_ssGSEA.rds")
+
+# Extracting the Enrichment Score for the pathway
+es_values <- sapply(res$HALLMARK_INTERFERON_GAMMA_RESPONSE, function(x) x$ES)
+sample_names <- colnames(res$HALLMARK_INTERFERON_GAMMA_RESPONSE[[1]])
+
+# Creating a dataframe for ggplot
+es_df <- data.frame(Sample = sample_names, EnrichmentScore = es_values)
+
+# Plotting the Enrichment Scores
+ggplot(es_df, aes(x = Sample, y = EnrichmentScore)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(title = "Enrichment Scores for HALLMARK_INTERFERON_GAMMA_RESPONSE",
+       x = "Sample", y = "Enrichment Score (ES)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Talk with Kim about alternatives here. 
+```
+
+
+############### TRYING Gene set enrichment ############
+
+```{r}
+
+
+fit <- DE_nobystander_all %>% dplyr::filter(padj < 0.1) 
+
+table(fit$contrast) # Weird ORX data. 
+
+filter_list <- fit %>% dplyr::select(contrast, gene)
+
+hallmark <- BIGprofiler(gene_df=filter_list, ID="SYMBOL", category="H", species = "mouse")
+
+#Filter Dataset to have only 0.2 FDR. 
+
+filter_list <- hallmark %>% dplyr::filter(FDR <= .3) %>% dplyr::select(c("pathway"))
+hallmark_filter <- filter(hallmark, hallmark$pathway %in% filter_list$pathway)
+
+#Basic Plot
+ggplot(hallmark_filter, aes(x= `k/K`, y = pathway, fill = FDR)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~group, nrow = 1) +
+  scale_fill_gradient(low = "red",
+                      high = "blue") +
+  theme_bw()
+
+ggsave("figs/Enrichment_anlaysis.png", width = 20, height = 8)
+
+```
+
+
+ Group_F_vs_M          Group_ORX_vs_M     GroupF.Liver_zonePC     GroupF.Typeschizont   GroupORX.Liver_zonePC 
+                    251                     333                       3                     285                      12 
+  GroupORX.Typeschizont     Liver_zone_IZ_vs_PP     Liver_zone_PC_vs_PP ROI_size_200um_vs_100um  ROI_size_50um_vs_100um 
+                   3414                      77                     259                       6                      17 
+  Type_schizont_vs_mock 
+                    951 
+                    
+                    

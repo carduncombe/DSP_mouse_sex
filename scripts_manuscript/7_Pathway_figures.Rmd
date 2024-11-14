@@ -1,0 +1,634 @@
+---
+title: "7_GSEA_figs_for_manuscript"
+author: "Caroline_Duncombe"
+date: "2024-10-24"
+output: html_document
+---
+
+###### CAROLINE TO UPDATE FOR FINAL VERION ##########
+PART VII: DSP Analysis on GeoMX data 
+
+```{r load the libraies }
+
+library(SEARchways)
+library(BIGpicture)
+library(dplyr)
+library(tibble)
+library(limma)
+library(ggplot2)
+library(circlize)
+library(stringr)
+library(RColorBrewer)
+library(here)
+library(readr)
+#load or download the 'usethis' package.
+pacman::p_load("usethis")
+pacman::p_load(BiocManager, devtools)
+
+rm(list = ls())
+
+gsea_dat <- readRDS(file = "clean_data/GSEA/GSEA_output_H_K.rds")
+
+unique(gsea_dat$group)
+
+```
+
+# Round 1: GSEA plot of genes up and down regulated between M vs F and M vs ORX
+
+Goal here is to create a heatmap or bubble plot for the paper showing the pathways of interest for MvsF & M vs ORX. 
+
+```{r First filter the pathways of}
+
+contrasts_of_interest <- c("Group_F_vs_M","Group_ORX_vs_M")
+# Okay - I am only going to plot the pathways that are significant. For at least one of the comparison. 
+
+# Step 1: Create a filtered dataset for pathways based on FDR
+gsea_dat_filter <- gsea_dat %>%
+  mutate(`FDR value`  = case_when(FDR <= 0.01  ~ "< 0.01",
+                              FDR <= 0.05 & FDR > 0.01  ~ "< 0.05",
+                              FDR <= 0.1 & FDR > 0.05  ~ "< 0.1",
+                              FDR <= 0.2 & FDR > 0.1  ~ "< 0.2",
+                              FDR > 0.2 ~ "ns",
+                              )) %>%
+  dplyr::filter(group %in% contrasts_of_interest)
+# LOOK AT DATA:
+table(gsea_dat_filter$`FDR value`, gsea_dat_filter$group)
+# Question - why are pathways not popping up well for F vs M. There should be so many given how strong the interaction is. 
+
+
+#IMPORANT NOTE: 
+#Okay Ideally I am taking the significant ones. But here that looks really off. I wonder why.... The gene expression looks fine to me. 
+#I will pull the top 10 pathways up and top 10 pathways down
+# Okay now pulling out the pathways that are below 0.1
+
+#MOVING ON!
+
+# Step 2: Identify top upregulated pathways (NES > 0) and filter by FDR
+top_upregulated_pathways <- gsea_dat_filter %>%
+  filter(NES > 0) %>%  # Positive NES for upregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 upregulated pathways
+
+# Step 3: Identify top downregulated pathways (NES < 0) and filter by FDR
+top_downregulated_pathways <- gsea_dat_filter %>%
+  filter(NES < 0) %>%  # Negative NES for downregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 downregulated pathways
+
+# Step 4: Combine both filtered datasets
+pathways_of_interest <- bind_rows(top_upregulated_pathways, top_downregulated_pathways)
+
+pathways_of_interest_list <- pathways_of_interest$pathway
+
+# Step 4: Filter back in all relevant information
+final_gsea_dat <- gsea_dat_filter %>%
+  dplyr::filter(pathway %in% pathways_of_interest_list)  # Replace 'pathway_id' with your actual identifier
+
+# View the final dataset
+print(final_gsea_dat)
+
+```
+
+Show in New Window
+
+         Group_F_vs_M Group_ORX_vs_M GroupF.Liver_zoneIZ GroupF.Liver_zonePC GroupF.Typeschizont GroupORX.Liver_zoneIZ
+  < 0.05            0              0                   0                   2                  15                     2
+  < 0.1             0              2                   2                   4                   9                     3
+  < 0.2             0             68                  17                  57                  45                    39
+  ns              236            166                 217                 173                 167                   190
+        
+         GroupORX.Liver_zonePC GroupORX.Typeschizont Liver_zone_IZ_vs_PP Liver_zone_PC_vs_PP ROI_size_200um_vs_100um
+  < 0.05                     6                     1                   0                   5                       0
+  < 0.1                      0                     0                   1                   6                       0
+  < 0.2                     30                     1                   7                  26                       0
+  ns                       200                   227                 228                 199                     236
+  
+  
+  
+
+```{r Setting up Bubble plot Aethestetics}
+
+all_filter <- final_gsea_dat %>%
+  mutate(
+    pathway_label = case_when(
+      grepl("HALLMARK_", pathway) ~ gsub("HALLMARK_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (H)"),
+      grepl("KEGG_", pathway) ~ gsub("KEGG_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (K)"),
+      TRUE ~ pathway  # Keep any non-HALLMARK/KEGG pathways as is
+    )
+  )
+
+# View the results
+
+#Basic Plot
+col_fun = colorRamp2(c(-1.5,-1,-0.5,0,0.5,1,1.5),c(rev(brewer.pal(n = 7, name ="RdYlBu"))))
+nes_colors <- scale_color_gradient2(low = "blue", mid = "white", high = "red", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+
+nes_colors <- scale_fill_gradient2(low = "#2C7BB6", mid = "#FFFFBF", high = "#D7191C", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+```
+
+```{r now create the bubble plot of this information}
+
+library(forcats)
+
+## Bubble plot
+plot <- ggplot(all_filter, aes(y = fct_reorder(pathway_label, NES), x = group)) +
+  geom_point(aes(size = `FDR value`, fill = NES), alpha = 1.0, stroke = 0.5, color = "black", shape = 21) + 
+  nes_colors +  # Apply the NES color scale here, assuming it's a scale_fill_* function
+  scale_size_manual(values = c(10, 8, 6, 1, 0)) +
+  theme_linedraw() + 
+  theme(
+    axis.title = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.1, color = "grey"),
+    panel.grid.major.x = element_line(linewidth = 0.1, color = "grey"),
+    legend.position = "left",
+    axis.text.y = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_y_discrete(position = "right")
+
+
+# Save the plot using ggsave
+ggsave(filename = "figs/GSEA_Bubbleplot/20241023_all_Sex_Baseline.png", plot = plot, width = 5, height = 6)
+
+```
+
+
+
+
+
+
+
+# Round 2: GSEA plot of genes up and down regulated between Periportal and Pericentral (at baseline)
+
+Goal here is to create a heatmap or bubble plot for the paper showing the pathways of interest for MvsF & M vs ORX. 
+
+```{r First filter the pathways of}
+
+contrasts_of_interest <- c("Liver_zone_PC_vs_PP","Liver_zone_IZ_vs_PP")
+# Okay - I am only going to plot the pathways that are significant. For at least one of the comparison. 
+
+# Step 1: Create a filtered dataset for pathways based on FDR
+gsea_dat_filter <- gsea_dat %>%
+  mutate(`FDR value`  = case_when(FDR <= 0.01  ~ "< 0.01",
+                              FDR <= 0.05 & FDR > 0.01  ~ "< 0.05",
+                              FDR <= 0.1 & FDR > 0.05  ~ "< 0.1",
+                              FDR <= 0.2 & FDR > 0.1  ~ "< 0.2",
+                              FDR > 0.2 ~ "ns",
+                              )) %>%
+  dplyr::filter(group %in% contrasts_of_interest)
+# LOOK AT DATA:
+table(gsea_dat_filter$`FDR value`, gsea_dat_filter$group)
+# Question - why are pathways not popping up well for F vs M. There should be so many given how strong the interaction is. 
+
+
+#IMPORANT NOTE: 
+#Okay Ideally I am taking the significant ones. But here that looks really off. I wonder why.... The gene expression looks fine to me. 
+#I will pull the top 10 pathways up and top 10 pathways down
+# Okay now pulling out the pathways that are below 0.1
+
+#MOVING ON!
+
+# Step 2: Identify top upregulated pathways (NES > 0) and filter by FDR
+top_upregulated_pathways <- gsea_dat_filter %>%
+  filter(NES > 0) %>%  # Positive NES for upregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 upregulated pathways
+
+# Step 3: Identify top downregulated pathways (NES < 0) and filter by FDR
+top_downregulated_pathways <- gsea_dat_filter %>%
+  filter(NES < 0) %>%  # Negative NES for downregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 downregulated pathways
+
+# Step 4: Combine both filtered datasets
+pathways_of_interest <- bind_rows(top_upregulated_pathways, top_downregulated_pathways)
+
+pathways_of_interest_list <- pathways_of_interest$pathway
+
+# Step 4: Filter back in all relevant information
+final_gsea_dat <- gsea_dat_filter %>%
+  dplyr::filter(pathway %in% pathways_of_interest_list)  # Replace 'pathway_id' with your actual identifier
+
+# View the final dataset
+print(final_gsea_dat)
+
+```
+
+```{r Setting up Bubble plot Aethestetics}
+
+all_filter <- final_gsea_dat %>%
+  mutate(
+    pathway_label = case_when(
+      grepl("HALLMARK_", pathway) ~ gsub("HALLMARK_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (H)"),
+      grepl("KEGG_", pathway) ~ gsub("KEGG_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (K)"),
+      TRUE ~ pathway  # Keep any non-HALLMARK/KEGG pathways as is
+    )
+  )
+
+# View the results
+
+#Basic Plot
+col_fun = colorRamp2(c(-1.5,-1,-0.5,0,0.5,1,1.5),c(rev(brewer.pal(n = 7, name ="RdYlBu"))))
+nes_colors <- scale_color_gradient2(low = "blue", mid = "white", high = "red", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+
+nes_colors <- scale_fill_gradient2(low = "#2C7BB6", mid = "#FFFFBF", high = "#D7191C", breaks = c(-2, -1,0, 1,2), labels = c("-2","-1","0","1","2"))
+
+```
+
+```{r now create the bubble plot of this information}
+
+library(forcats)
+
+## Bubble plot
+plot <- ggplot(all_filter, aes(y = fct_reorder(pathway_label, NES), x = group)) +
+  geom_point(aes(size = `FDR value`, fill = NES), alpha = 1.0, stroke = 0.5, color = "black", shape = 21) + 
+  nes_colors +  # Apply the NES color scale here, assuming it's a scale_fill_* function
+  scale_size_manual(values = c(10, 8, 6, 1, 0)) +
+  theme_linedraw() + 
+  theme(
+    axis.title = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.1, color = "grey"),
+    panel.grid.major.x = element_line(linewidth = 0.1, color = "grey"),
+    legend.position = "left",
+    axis.text.y = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_y_discrete(position = "right")
+
+
+# Save the plot using ggsave
+ggsave(filename = "figs/GSEA_Bubbleplot/20241023_all_Zonation_at_baseline_Baseline.png", plot = plot, width = 5, height = 6)
+
+```
+
+
+# Round 3: GSEA plot of genes up and down regulated between Periportal and Pericentral interaction with sex. 
+
+Goal here is to create a heatmap or bubble plot for the paper showing the pathways of interest for MvsF & M vs ORX. 
+
+```{r First filter the pathways of}
+
+contrasts_of_interest <- c("GroupF.Liver_zoneIZ","GroupF.Liver_zonePC", "GroupORX.Liver_zoneIZ", "GroupORX.Liver_zonePC")
+# Okay - I am only going to plot the pathways that are significant. For at least one of the comparison. 
+
+# Step 1: Create a filtered dataset for pathways based on FDR
+gsea_dat_filter <- gsea_dat %>%
+  mutate(`FDR value`  = case_when(FDR <= 0.01  ~ "< 0.01",
+                              FDR <= 0.05 & FDR > 0.01  ~ "< 0.05",
+                              FDR <= 0.1 & FDR > 0.05  ~ "< 0.1",
+                              FDR <= 0.2 & FDR > 0.1  ~ "< 0.2",
+                              FDR > 0.2 ~ "ns",
+                              )) %>%
+  dplyr::filter(group %in% contrasts_of_interest)
+# LOOK AT DATA:
+table(gsea_dat_filter$`FDR value`, gsea_dat_filter$group)
+# Question - why are pathways not popping up well for F vs M. There should be so many given how strong the interaction is. 
+
+
+#IMPORANT NOTE: 
+#Okay Ideally I am taking the significant ones. But here that looks really off. I wonder why.... The gene expression looks fine to me. 
+#I will pull the top 10 pathways up and top 10 pathways down
+# Okay now pulling out the pathways that are below 0.1
+
+#MOVING ON!
+
+# Step 2: Identify top upregulated pathways (NES > 0) and filter by FDR
+top_upregulated_pathways <- gsea_dat_filter %>%
+  filter(NES > 0) %>%  # Positive NES for upregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 upregulated pathways
+
+# Step 3: Identify top downregulated pathways (NES < 0) and filter by FDR
+top_downregulated_pathways <- gsea_dat_filter %>%
+  filter(NES < 0) %>%  # Negative NES for downregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 downregulated pathways
+
+# Step 4: Combine both filtered datasets
+pathways_of_interest <- bind_rows(top_upregulated_pathways, top_downregulated_pathways)
+
+pathways_of_interest_list <- pathways_of_interest$pathway
+
+# Step 4: Filter back in all relevant information
+final_gsea_dat <- gsea_dat_filter %>%
+  dplyr::filter(pathway %in% pathways_of_interest_list)  # Replace 'pathway_id' with your actual identifier
+
+# View the final dataset
+print(final_gsea_dat)
+
+```
+
+```{r Setting up Bubble plot Aethestetics}
+
+all_filter <- final_gsea_dat %>%
+  mutate(
+    pathway_label = case_when(
+      grepl("HALLMARK_", pathway) ~ gsub("HALLMARK_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (H)"),
+      grepl("KEGG_", pathway) ~ gsub("KEGG_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (K)"),
+      TRUE ~ pathway  # Keep any non-HALLMARK/KEGG pathways as is
+    )
+  )
+
+# View the results
+
+#Basic Plot
+nes_colors <- scale_fill_gradient2(
+  low = "#2C7BB6",     # Blue for low values
+  mid = "#FFFFBF",      # Yellow for mid values
+  high = "#D7191C",     # Red for high values
+  midpoint = -1,        # Setting midpoint between the low and high extremes
+  limits = c(-3.6, 2),    # Setting limits for the NES scale
+  breaks = c(-3, -2, -1, 0, 1),  # Customized breaks
+  labels = c("-3", "-2", "-1", "0", "1")  # Labels for the breaks
+)
+
+```
+
+```{r now create the bubble plot of this information}
+
+library(forcats)
+
+## Bubble plot
+plot <- ggplot(all_filter, aes(y = fct_reorder(pathway_label, NES), x = group)) +
+  geom_point(aes(size = `FDR value`, fill = NES), alpha = 1.0, stroke = 0.5, color = "black", shape = 21) + 
+  nes_colors +  # Apply the NES color scale here, assuming it's a scale_fill_* function
+  scale_size_manual(values = c(10, 8, 6, 1, 0)) +
+  theme_linedraw() + 
+  theme(
+    axis.title = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.1, color = "grey"),
+    panel.grid.major.x = element_line(linewidth = 0.1, color = "grey"),
+    legend.position = "left",
+    axis.text.y = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_y_discrete(position = "right")
+
+
+# Save the plot using ggsave
+ggsave(filename = "figs/GSEA_Bubbleplot/20241023_all_Zonation_with_sex_Baseline.png", plot = plot, width = 5.5, height = 6)
+
+```
+
+# Round 4: GSEA plot of genes up and down regulated between mock and schizont
+
+Goal here is to create a heatmap or bubble plot for the paper showing the pathways of interest for MvsF & M vs ORX. 
+
+```{r First filter the pathways of}
+
+contrasts_of_interest <- c("Type_schizont_vs_mock")
+# Okay - I am only going to plot the pathways that are significant. For at least one of the comparison. 
+
+# Step 1: Create a filtered dataset for pathways based on FDR
+gsea_dat_filter <- gsea_dat %>%
+  mutate(`FDR value`  = case_when(FDR <= 0.01  ~ "< 0.01",
+                              FDR <= 0.05 & FDR > 0.01  ~ "< 0.05",
+                              FDR <= 0.1 & FDR > 0.05  ~ "< 0.1",
+                              FDR <= 0.2 & FDR > 0.1  ~ "< 0.2",
+                              FDR > 0.2 ~ "ns",
+                              )) %>%
+  dplyr::filter(group %in% contrasts_of_interest)
+# LOOK AT DATA:
+table(gsea_dat_filter$`FDR value`, gsea_dat_filter$group)
+# Question - why are pathways not popping up well for F vs M. There should be so many given how strong the interaction is. 
+
+#IMPORANT NOTE: 
+#Okay Ideally I am taking the significant ones. But here that looks really off. I wonder why.... The gene expression looks fine to me. 
+#I will pull the top 10 pathways up and top 10 pathways down
+# Okay now pulling out the pathways that are below 0.1
+
+#MOVING ON!
+
+# Step 2: Identify top upregulated pathways (NES > 0) and filter by FDR
+top_upregulated_pathways <- gsea_dat_filter %>%
+  filter(NES > 0) %>%  # Positive NES for upregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 upregulated pathways
+
+# Step 3: Identify top downregulated pathways (NES < 0) and filter by FDR
+top_downregulated_pathways <- gsea_dat_filter %>%
+  filter(NES < 0) %>%  # Negative NES for downregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 downregulated pathways
+
+# Step 4: Combine both filtered datasets
+pathways_of_interest <- bind_rows(top_upregulated_pathways, top_downregulated_pathways)
+
+pathways_of_interest_list <- pathways_of_interest$pathway
+
+# Step 4: Filter back in all relevant information
+final_gsea_dat <- gsea_dat_filter %>%
+  dplyr::filter(pathway %in% pathways_of_interest_list)  # Replace 'pathway_id' with your actual identifier
+
+# View the final dataset
+print(final_gsea_dat)
+
+```
+
+```{r Setting up Bubble plot Aethestetics}
+
+all_filter <- final_gsea_dat %>%
+  mutate(
+    pathway_label = case_when(
+      grepl("HALLMARK_", pathway) ~ gsub("HALLMARK_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (H)"),
+      grepl("KEGG_", pathway) ~ gsub("KEGG_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (K)"),
+      TRUE ~ pathway  # Keep any non-HALLMARK/KEGG pathways as is
+    )
+  )
+
+# View the results
+
+#Basic Plot
+nes_colors <- scale_fill_gradient2(
+  low = "#2C7BB6",     # Blue for low values
+  mid = "#FFFFBF",      # Yellow for mid values
+  high = "#D7191C",     # Red for high values
+  #midpoint = -1,        # Setting midpoint between the low and high extremes
+  #limits = c(-3.6, 2),    # Setting limits for the NES scale
+  breaks = c(-2, -1, 0, 1, 2),  # Customized breaks
+  labels = c("-2", "-1", "0", "1", "2")  # Labels for the breaks
+)
+
+```
+
+```{r now create the bubble plot of this information}
+
+library(forcats)
+
+## Bubble plot
+plot <- ggplot(all_filter, aes(y = fct_reorder(pathway_label, NES), x = group)) +
+  geom_point(aes(size = `FDR value`, fill = NES), alpha = 1.0, stroke = 0.5, color = "black", shape = 21) + 
+  nes_colors +  # Apply the NES color scale here, assuming it's a scale_fill_* function
+  scale_size_manual(values = c(10, 8, 6, 1, 0)) +
+  theme_linedraw() + 
+  theme(
+    axis.title = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.1, color = "grey"),
+    panel.grid.major.x = element_line(linewidth = 0.1, color = "grey"),
+    legend.position = "left",
+    axis.text.y = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_y_discrete(position = "right")
+
+
+# Save the plot using ggsave
+ggsave(filename = "figs/GSEA_Bubbleplot/20241023_mock vs schizont_bubbleplot.png", plot = plot, width = 4.3, height = 6)
+
+```
+
+
+# Round 4: GSEA plot of genes up and down regulated between Male, ORX, and Females
+
+Goal here is to create a heatmap or bubble plot for the paper showing the pathways of interest for MvsF & M vs ORX. 
+
+```{r First filter the pathways of}
+
+contrasts_of_interest <- c("GroupF.Typeschizont", "GroupORX.Typeschizont")
+# Okay - I am only going to plot the pathways that are significant. For at least one of the comparison. 
+
+# Step 1: Create a filtered dataset for pathways based on FDR
+gsea_dat_filter <- gsea_dat %>%
+  mutate(`FDR value`  = case_when(FDR <= 0.01  ~ "< 0.01",
+                              FDR <= 0.05 & FDR > 0.01  ~ "< 0.05",
+                              FDR <= 0.1 & FDR > 0.05  ~ "< 0.1",
+                              FDR <= 0.2 & FDR > 0.1  ~ "< 0.2",
+                              FDR > 0.2 ~ "ns",
+                              )) %>%
+  dplyr::filter(group %in% contrasts_of_interest)
+# LOOK AT DATA:
+table(gsea_dat_filter$`FDR value`, gsea_dat_filter$group)
+# Question - why are pathways not popping up well for F vs M. There should be so many given how strong the interaction is. 
+
+#IMPORANT NOTE: 
+#Okay Ideally I am taking the significant ones. But here that looks really off. I wonder why.... The gene expression looks fine to me. 
+#I will pull the top 10 pathways up and top 10 pathways down
+# Okay now pulling out the pathways that are below 0.1
+
+#MOVING ON!
+
+# Step 2: Identify top upregulated pathways (NES > 0) and filter by FDR
+top_upregulated_pathways <- gsea_dat_filter %>%
+  filter(NES > 0) %>%  # Positive NES for upregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 upregulated pathways
+
+# Step 3: Identify top downregulated pathways (NES < 0) and filter by FDR
+top_downregulated_pathways <- gsea_dat_filter %>%
+  filter(NES < 0) %>%  # Negative NES for downregulated
+  arrange(FDR) %>%  # Sort by most significant FDR
+  slice_head(n = 10)  # Top 10 downregulated pathways
+
+# Step 4: Combine both filtered datasets
+pathways_of_interest <- bind_rows(top_upregulated_pathways, top_downregulated_pathways)
+
+pathways_of_interest_list <- pathways_of_interest$pathway
+
+# Step 4: Filter back in all relevant information
+final_gsea_dat <- gsea_dat_filter %>%
+  dplyr::filter(pathway %in% pathways_of_interest_list)  # Replace 'pathway_id' with your actual identifier
+
+# View the final dataset
+print(final_gsea_dat)
+
+```
+
+```{r Setting up Bubble plot Aethestetics}
+
+all_filter <- final_gsea_dat %>%
+  mutate(
+    pathway_label = case_when(
+      grepl("HALLMARK_", pathway) ~ gsub("HALLMARK_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (H)"),
+      grepl("KEGG_", pathway) ~ gsub("KEGG_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (K)"),
+      TRUE ~ pathway  # Keep any non-HALLMARK/KEGG pathways as is
+    )
+  )
+
+# View the results
+
+#Basic Plot
+nes_colors <- scale_fill_gradient2(
+  low = "#2C7BB6",     # Blue for low values
+  mid = "#FFFFBF",      # Yellow for mid values
+  high = "#D7191C",     # Red for high values
+  midpoint = -1,        # Setting midpoint between the low and high extremes
+  limits = c(-3, 2),    # Setting limits for the NES scale
+  breaks = c(-2, -1, 0, 1, 2),  # Customized breaks
+  labels = c("-2", "-1", "0", "1", "2")  # Labels for the breaks
+)
+
+```
+
+```{r now create the bubble plot of this information}
+
+library(forcats)
+
+## Bubble plot
+plot <- ggplot(all_filter, aes(y = fct_reorder(pathway_label, NES), x = group)) +
+  geom_point(aes(size = `FDR value`, fill = NES), alpha = 1.0, stroke = 0.5, color = "black", shape = 21) + 
+  nes_colors +  # Apply the NES color scale here, assuming it's a scale_fill_* function
+  scale_size_manual(values = c(10, 8, 6, 3, 1, 0)) +
+  theme_linedraw() + 
+  theme(
+    axis.title = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.1, color = "grey"),
+    panel.grid.major.x = element_line(linewidth = 0.1, color = "grey"),
+    legend.position = "left",
+    axis.text.y = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_y_discrete(position = "right")
+
+
+# Save the plot using ggsave
+ggsave(filename = "figs/GSEA_Bubbleplot/20241023_FvsMvsORX_with mock vs schizont_bubbleplot.png", plot = plot, width = 5.5, height = 7)
+
+```
+
+
+
+
+

@@ -1,0 +1,807 @@
+---
+title: "4_DE_gene_analysis"
+author: "Caroline_Duncombe"
+date: "2024-11-01"
+output: html_document
+---
+
+###### CAROLINE TO UPDATE FOR FINAL VERION ##########
+PART IV: DSP Analysis on GeoMX data 
+
+The goal of this script is to investigate the genes that I would emphasize in the paper. Here I will break down the type I would need per section:
+
+Working draft - no need for GW to check.
+
+#### ANALYSIS PLAN #####
+
+Two datasets:
+    * Interaction terms data
+        Will use this for main comparisons. 
+    * Contrast term data
+        Will use this to pull out genes that might be relevant. 
+        I will focus this analysis on these contrast terms first. 
+        Let's see how it goes. 
+        
+########################################################################################################################################
+
+# STEP 1: LOAD IN DATA AND LOOK AT FORM
+
+########################################################################################################################################
+
+        
+
+```{r load the libraies }
+library(SEARchways)
+library(BIGpicture)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(circlize)
+library(stringr)
+library(RColorBrewer)
+library(here)
+library(readr)
+library(ComplexUpset)
+
+#load or download the 'usethis' package.
+pacman::p_load("usethis")
+pacman::p_load(BiocManager, devtools)
+
+rm(list = ls())
+
+interaction_DE <- read_csv("clean_data/DE/DE_nobystander_all_SVA_interaction_model.csv")
+
+```
+
+```{r LOAD in the contrast into a single dataset}
+
+# Define the main directory where DE files are saved
+main_dir <- "clean_data/DE/DE.noby_SVA_contrast_model/"
+
+# List all CSV files in the main directory
+csv_files <- list.files(main_dir, pattern = "\\.csv$", full.names = TRUE)
+
+# Initialize an empty list to store dataframes
+de_list <- list()
+
+# Check if any CSV files were found
+if (length(csv_files) == 0) {
+  stop("No CSV files found in the specified directory.")
+}
+
+# Loop through each CSV file
+for (de_file in csv_files) {
+  # Extract the contrast name from the file name (assuming file names follow a pattern like 'contrastname_differential_expression.csv')
+  contrast_name <- tools::file_path_sans_ext(basename(de_file))
+  
+  # Read the CSV file
+  de_data <- tryCatch({
+    read.csv(de_file)
+  }, error = function(e) {
+    warning(paste("Could not read file:", de_file))
+    return(NULL)
+  })
+  
+  # Only add the data if it was successfully read
+  if (!is.null(de_data)) {
+    # Add a new column with the contrast name
+    de_data$contrast_name <- contrast_name
+    
+    # Append the dataframe to the list
+    de_list[[contrast_name]] <- de_data
+  }
+}
+
+# Check if any data was successfully added to the list before combining
+if (length(de_list) > 0) {
+  # Combine all dataframes in the list into a single dataframe
+  combined_de_data <- bind_rows(de_list)
+  
+  # Print a preview of the combined dataframe
+  print(head(combined_de_data))
+  
+  # Optionally save the combined dataframe as a CSV
+  write.csv(combined_de_data, file.path(main_dir, "combined_differential_expression_data.csv"), row.names = FALSE)
+} else {
+  stop("No DE data could be loaded; please check file paths and formats.")
+}
+
+contrast_DE <- combined_de_data
+
+contrast_DE <- contrast_DE %>%
+  mutate(contrast_name = sub("_differential_expression$", "", contrast_name))
+
+```
+
+
+# Figure MOCKS: DSP enables quantification of sex bias in immune cell density and gene expression. 
+
+Genes of interest in mock groups (baseline)
+  * Genes regulated by biological sex (Shared between M & ORX, but not F)
+  * Genes regulated by androgens (Shared between F & ORX, but not M)
+Pathways related to hormones  
+  * Steriod hormone biosynthesis (K)
+  * Androgen response (H)
+  * Estrogen response late (H)
+  * Estrogen response early (H)
+Pathways that may influence Plasmodium development 
+  * Fatty acid metabolism (H)
+  * Cholesterol homeostasis (H)
+  * Mtorc1 signaling (H)
+Pathways that infleunce inflammation
+  * Interferon alpha response
+  * Interferon gamma response
+  * TNFA signaling via nfkb
+
+### First make an upset plot
+```{r First make an upset plot}
+
+padj_value = 0.05
+logfold_value = .8
+
+contrast_DE_mock <- contrast_DE %>% dplyr::filter(contrast_name %in% c("F_mock_vs_ORX_mock","M_mock_vs_F_mock","M_mock_vs_ORX_mock"))
+
+upset_data <- contrast_DE_mock %>%
+  filter(padj < padj_value, log2FoldChange > logfold_value | log2FoldChange < -logfold_value) %>%  # Keep only significant genes
+  mutate(present = TRUE) %>%  # Mark presence
+  group_by(gene, contrast_name) %>%  # Group by gene and contrast
+  summarise(present = max(present), .groups = 'drop') %>%  # Ensure presence is logical
+  tidyr::pivot_wider(names_from = contrast_name, values_from = present, values_fill = list(present = FALSE)) %>%
+  column_to_rownames("gene")
+
+
+# Create UpSet plot
+UpSetR::upset(upset_data, sets = colnames(upset_data), keep.order = TRUE)
+```
+
+### Genes regulated by biological sex (Shared between M & ORX, but not F)
+Unique to not M_mock_vs_ORX_mock, but yes to F_mock_vs_ORX_mock & M_mock_vs_F_mock
+```{r Genes regulated by }
+
+# Extract intersecting genes from the dataframe
+intersecting_genes <- upset_data %>%
+  filter(F_mock_vs_ORX_mock & M_mock_vs_F_mock & !M_mock_vs_ORX_mock) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes shared between M & ORX, but not F:", paste(intersecting_genes, collapse = ", ")))
+
+
+regulated_by_sex <- intersecting_genes
+```
+  
+## Genes regulated by androgens (Shared between F & ORX, but not M)
+Unique to  M_mock_vs_ORX_mock & M_mock_vs_F_mock but not to F_mock_vs_ORX_mock
+```{r Genes regulated by androgens}
+
+# Extract intersecting genes from the dataframe
+intersecting_genes <- upset_data %>%
+  filter(M_mock_vs_ORX_mock & M_mock_vs_F_mock & !F_mock_vs_ORX_mock) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes shared between F & ORX, but not M:", paste(intersecting_genes, collapse = ", ")))
+
+regulated_by_androgens <- intersecting_genes
+
+```
+
+### Now I want to run code to look at if genes in a certain pathway are differentially expression. 
+The final output will be a list of genes in each pathway printed out (maybe listed in a dataframe for each unique contrast. 
+```{r First pull the genes in each pathway of interest}
+
+pathways_of_interest <- c(# hormones
+                          "KEGG_STEROID_HORMONE_BIOSYNTHESIS",
+                          "HALLMARK_ANDROGEN_RESPONSE",
+                          "HALLMARK_ESTROGEN_RESPONSE_LATE",
+                          "HALLMARK_ESTROGEN_RESPONSE_EARLY",
+                          # Metabolism
+                          "HALLMARK_FATTY_ACID_METABOLISM",
+                          "HALLMARK_CHOLESTEROL_HOMEOSTASIS",
+                          "HALLMARK_MTORC1_SIGNALING",
+                          #Inflammation
+                          "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+                          "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+                          "HALLMARK_INFLAMMATORY_RESPONSE",
+                          "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+                          )
+
+### Pull the specifies path
+msig_k <- as.data.frame(msigdbr::msigdbr(species = "Mus musculus", category = "C2", subcategory = "KEGG")) 
+msig_h <- as.data.frame(msigdbr::msigdbr(species = "Mus musculus", category = "H", subcategory = "")) 
+
+msig_df <- rbind(msig_k,msig_h) # USE THIS TO LOOK AT PATHWAYS & ANNOTATIONS. 
+
+```
+
+Next step is to identify which DE genes are in these pathway - question though - is this just an enrichment analysis?
+Okay this is enrichment for for each contrast & shared output. 
+```{r}
+
+# Create a dataframe to do enrichment on the genes of interest I pulled out. 
+
+# Create dataframes for each set of genes
+androgens_df <- data.frame(gene = regulated_by_androgens, source = "regulated_by_androgens")
+sex_df <- data.frame(gene = regulated_by_sex, source = "regulated_by_sex")
+
+# Combine the two dataframes into one long-form dataframe
+genes_df <- rbind(androgens_df, sex_df) %>% select(source, gene)
+
+enrichment_df_h <- BIGprofiler(gene_df=genes_df, ID="SYMBOL", category="H", species = "mouse")
+enrichment_df_k <- BIGprofiler(gene_df=genes_df, ID="SYMBOL", category="C2", subcategory = "CP:KEGG", species = "mouse")
+
+enrichment_df <- rbind(enrichment_df_h, enrichment_df_k)
+
+```
+
+```{r Print out the pathways of interest to look at the results}
+
+enrichment_df_selected <- enrichment_df  %>% dplyr::filter(pathway %in% pathways_of_interest) %>% select(group, pathway, group_in_pathway, genes)
+
+# Print each pathway's genes in full
+for (i in seq_len(nrow(enrichment_df_selected))) {
+  cat("Group:", enrichment_df_selected$group[i], 
+      "\nPathway:", enrichment_df_selected$pathway[i], 
+      "\nGenes:", paste(enrichment_df_selected$genes[[i]], collapse = ", "), 
+      "\n\n")
+}
+
+```
+
+Done with Figure 4 analysis! Looks beautiful
+
+# Figure SCHIZONT VERSUS MOCK
+### First make an upset plot
+```{r First make an upset plot}
+
+
+padj_value = 0.05
+logfold_value = 1
+
+contrast_DE_schizont<- contrast_DE %>% dplyr::filter(contrast_name %in% c("F_schizont_vs_F_mock","M_schizont_vs_M_mock","ORX_schizont_vs_ORX_mock"))
+
+upset_data <- contrast_DE_schizont %>%
+  filter(padj < padj_value, log2FoldChange > logfold_value | log2FoldChange < -logfold_value) %>%   # Keep only significant genes
+  mutate(present = TRUE) %>%  # Mark presence
+  group_by(gene, contrast_name) %>%  # Group by gene and contrast
+  summarise(present = max(present), .groups = 'drop') %>%  # Ensure presence is logical
+  tidyr::pivot_wider(names_from = contrast_name, values_from = present, values_fill = list(present = FALSE)) %>%
+  column_to_rownames("gene")
+
+
+# Create UpSet plot
+upset_plot <- UpSetR::upset(upset_data, sets = colnames(upset_data), keep.order = TRUE)
+
+png("figs/upset_plots/Schizont_vs_mock.png", width = 6, height = 4, units = "in", res = 300)
+# Create the upset plot
+upset_plot
+# Close the device
+dev.off()
+```
+
+```{r Create a table for supplements}
+
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(tibble)
+
+# Filter significant genes and prepare data for UpSetR plot
+contrast_DE_schizont <- contrast_DE %>% 
+  filter(contrast_name %in% c("F_schizont_vs_F_mock", "M_schizont_vs_M_mock", "ORX_schizont_vs_ORX_mock")) %>%
+  filter(padj < padj_value, abs(log2FoldChange) > logfold_value) %>%
+  mutate(present = TRUE) %>%
+  group_by(gene, contrast_name) %>%
+  summarise(present = max(present), .groups = 'drop') %>%
+  pivot_wider(names_from = contrast_name, values_from = present, values_fill = list(present = FALSE)) %>%
+  column_to_rownames("gene")
+
+# Define columns for each contrast
+contrast_cols <- colnames(contrast_DE_schizont)
+
+# Function to extract genes unique or shared in specific contrasts
+get_gene_sets <- function(data, contrast_cols) {
+  gene_sets <- list()
+  
+  # Unique to each contrast
+  for (contrast in contrast_cols) {
+    gene_sets[[paste0("Unique_to_", contrast)]] <- data %>%
+      filter(!!sym(contrast) == TRUE & rowSums(data[, contrast_cols] == TRUE) == 1) %>%
+      rownames_to_column("gene")
+  }
+  
+  # Shared between pairs of contrasts
+  for (i in 1:(length(contrast_cols) - 1)) {
+    for (j in (i + 1):length(contrast_cols)) {
+      contrast1 <- contrast_cols[i]
+      contrast2 <- contrast_cols[j]
+      gene_sets[[paste0("Shared_between_", contrast1, "_and_", contrast2)]] <- data %>%
+        filter(!!sym(contrast1) == TRUE & !!sym(contrast2) == TRUE & rowSums(data[, contrast_cols] == TRUE) == 2) %>%
+        rownames_to_column("gene")
+    }
+  }
+  
+  # Shared across all contrasts
+  gene_sets[["Shared_between_all"]] <- data %>%
+    filter(rowSums(data[, contrast_cols] == TRUE) == length(contrast_cols)) %>%
+    rownames_to_column("gene")
+  
+  return(gene_sets)
+}
+
+# Apply the function to get all sets
+gene_sets <- get_gene_sets(contrast_DE_schizont, contrast_cols)
+
+# Combine all gene sets into a single data table
+combined_gene_table <- bind_rows(gene_sets, .id = "comparison") # Use this for Gene Set enrichment. 
+
+
+# Create a table summarizing the number of genes and their lists for each comparison
+comparison_table <- lapply(gene_sets, function(df) {
+  data.frame(
+    Gene_Count = nrow(df),
+    Genes = paste(df$gene, collapse = ", ")
+  )
+}) %>%
+  bind_rows(.id = "Comparison")
+
+# Print the comparison table for manuscript use
+print(comparison_table)
+
+# Save as a CSV file for a publishable format
+write.csv(comparison_table, "clean_data/Upset_plot_shared_genes_gene_table_schizont_vs_mock.csv", row.names = FALSE)
+
+
+
+# Combine the dataframes into one long-form dataframe
+genes_df <- combined_gene_table %>%
+  select(comparison, gene)
+
+############# GSEA ################
+# Run enrichment analysis
+set.seed(123)
+enrichment_df_h <- BIGprofiler(gene_df = genes_df, ID = "SYMBOL", category = "H", subcategory = "", species = "mouse")
+enrichment_df_k <- BIGprofiler(gene_df = genes_df, ID = "SYMBOL", category = "C2", subcategory = "CP:KEGG", species = "mouse")
+
+# Combine enrichment results
+enrichment_df <- rbind(enrichment_df_h, enrichment_df_k)
+
+```
+
+```{r Enrichment plots for the panel}
+
+# pull out pathwyas of interest
+
+pathways_of_interest <- enrichment_df %>% dplyr::filter(FDR < 0.05)
+pathways_of_interest <- unique(pathways_of_interest$pathway)
+
+
+unique(enrichment_df$group)
+
+# 
+enrichment_df_selected <- enrichment_df %>% dplyr::filter(pathway %in% pathways_of_interest)  %>%
+  mutate(
+    pathway_label = case_when(
+      grepl("HALLMARK_", pathway) ~ gsub("HALLMARK_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (H)"),
+      grepl("KEGG_", pathway) ~ gsub("KEGG_", "", pathway) %>% 
+        gsub("_", " ", .) %>% 
+        tolower() %>% 
+        str_replace("\\b\\w+\\b", str_to_title) %>% 
+        paste0(" (K)"),
+      TRUE ~ pathway  # Keep any non-HALLMARK/KEGG pathways as is
+    )
+  ) %>%
+ # mutate(bubble_size  = as.character(group_in_pathway)) %>%
+  mutate(`FDR value`  = case_when(
+                              FDR <= 0.05 ~ "< 0.05",
+                              FDR > 0.05 ~ "ns",
+                              )) %>%
+  mutate(group_label = case_when(group == "Unique_to_ORX_schizont_vs_ORX_mock"  ~ "Unique to ORX",
+                                   group == "Unique_to_F_schizont_vs_F_mock"  ~ "Unique to F",
+                                   group == "Unique_to_M_schizont_vs_M_mock"  ~ "Unique to M",
+                                   group == "Shared_between_ORX_schizont_vs_ORX_mock_and_F_schizont_vs_F_mock"  ~ "Shared F & ORX",
+                                   group == "Shared_between_ORX_schizont_vs_ORX_mock_and_M_schizont_vs_M_mock"  ~ "Shared M & ORX",
+                                   group == "Shared_between_F_schizont_vs_F_mock_and_M_schizont_vs_M_mock"  ~ "Shared F & M",
+                                 
+                              ))
+      
+
+nes_colors <- scale_fill_gradient2(
+  low = "#2C7BB6",     # Blue for low values
+  mid = "#FFFFBF",      # Yellow for mid values
+  high = "#D7191C",     # Red for high values
+  midpoint = -1,        # Setting midpoint between the low and high extremes
+  limits = c(-3, 2),    # Setting limits for the NES scale
+  breaks = c(-2, -1, 0, 1, 2),  # Customized breaks
+  labels = c("-2", "-1", "0", "1", "2")  # Labels for the breaks
+)   
+
+library(forcats)
+
+## Bubble plot
+plot <- ggplot(enrichment_df_selected, aes(y = fct_reorder(pathway_label, group_in_pathway), x = `k/K`)) +
+  # Add lines from x = 0 to each point location
+  geom_segment(aes(x = 0, xend = `k/K`, y = fct_reorder(pathway_label, group_in_pathway), 
+                   yend = fct_reorder(pathway_label, `k/K`)), color = "grey") +
+  # Add bubbles
+  geom_point(aes(size = group_in_pathway, fill = `FDR value`), alpha = 1.0, stroke = 0.5, color = "black", shape = 21) +
+  # Set size scale manually (if needed, else try scale_size_continuous for a continuous range)
+  scale_size_continuous(name = "Number of genes") +
+  # Apply NES color scale here if defined (e.g., scale_fill_gradient)
+  # nes_colors +
+  facet_wrap(~group_label, nrow = 1) +
+  theme_linedraw() +
+  theme(
+    axis.title = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.1, color = "grey"),
+    panel.grid.major.x = element_line(linewidth = 0.1, color = "grey"),
+    legend.position = "left",
+    axis.text.y = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_y_discrete(position = "right")
+
+ggsave("figs/gene_enrichment/Unique_to_infection.png", width = 11, height = 4)
+
+```
+
+
+
+
+### Genes shared across all groups (Shared between M & ORX & F in response to infection)
+
+```{r Genes globally up by infection}
+
+# Extract intersecting genes from the dataframe
+intersecting_genes <- upset_data %>%
+  filter(F_schizont_vs_F_mock & M_schizont_vs_M_mock & ORX_schizont_vs_ORX_mock) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes shared between Shared between M & ORX & F in response to infection:", paste(intersecting_genes, collapse = ", ")))
+
+shared_across_all_groups <- intersecting_genes
+```
+  
+## Genes regulated by androgens (Shared between F & ORX, but not M)
+
+```{r Genes regulated by androgens}
+
+# Extract intersecting genes from the dataframe
+intersecting_genes <- upset_data %>%
+  filter(F_schizont_vs_F_mock & !M_schizont_vs_M_mock & ORX_schizont_vs_ORX_mock) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes shared between F & ORX, but not M in response to schizont:", paste(intersecting_genes, collapse = ", ")))
+
+regulated_by_androgens_F_ORX <- intersecting_genes
+
+# Extract intersecting genes from the dataframe
+intersecting_genes <- upset_data %>%
+  filter(!F_schizont_vs_F_mock & M_schizont_vs_M_mock & !ORX_schizont_vs_ORX_mock) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes shared between M, but not F & ORX in response to schizont:", paste(intersecting_genes, collapse = ", ")))
+
+regulated_by_androgens_M <- intersecting_genes
+
+
+```
+
+```{r Genes regulated by biological sex}
+
+# Extract intersecting genes from the dataframe
+intersecting_genes <- upset_data %>%
+  filter(F_schizont_vs_F_mock & !M_schizont_vs_M_mock & !ORX_schizont_vs_ORX_mock) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes unqiue to F, but not M & ORX in response to schizont:", paste(intersecting_genes, collapse = ", ")))
+
+regulated_by_sex_f <- intersecting_genes
+
+intersecting_genes <- upset_data %>%
+  filter(!F_schizont_vs_F_mock & M_schizont_vs_M_mock & ORX_schizont_vs_ORX_mock) %>%  # Filter conditions
+  rownames() 
+
+print(paste("These are genes unqiue to M & ORX, but not F in response to schizont:", paste(intersecting_genes, collapse = ", ")))
+
+regulated_by_sex_M_ORX <- intersecting_genes
+
+```
+
+### Now I want to run code to look at if genes in a certain pathway are differentially expression. 
+The final output will be a list of genes in each pathway printed out (maybe listed in a dataframe for each unique contrast. 
+```{r First pull the genes in each pathway of interest}
+
+pathways_of_interest <- c(# hormones
+                          "KEGG_STEROID_HORMONE_BIOSYNTHESIS",
+                          "HALLMARK_ANDROGEN_RESPONSE",
+                          "HALLMARK_ESTROGEN_RESPONSE_LATE",
+                          "HALLMARK_ESTROGEN_RESPONSE_EARLY",
+                          # Metabolism
+                          "HALLMARK_FATTY_ACID_METABOLISM",
+                          "HALLMARK_CHOLESTEROL_HOMEOSTASIS",
+                          "HALLMARK_MTORC1_SIGNALING",
+                          #Inflammation
+                          "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+                          "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+                          "HALLMARK_INFLAMMATORY_RESPONSE",
+                          "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+                          )
+
+### Pull the specifies path
+msig_k <- as.data.frame(msigdbr::msigdbr(species = "Mus musculus", category = "C2", subcategory = "KEGG")) 
+msig_h <- as.data.frame(msigdbr::msigdbr(species = "Mus musculus", category = "H", subcategory = "")) 
+
+msig_df <- rbind(msig_k,msig_h) # USE THIS TO LOOK AT PATHWAYS & ANNOTATIONS. 
+
+```
+
+Next step is to identify which DE genes are in these pathway - question though - is this just an enrichment analysis?
+Okay this is enrichment for for each contrast & shared output. 
+```{r}
+
+# Create dataframes for each set of genes
+shared_df <- data.frame(gene = shared_across_all_groups, source = "shared_across_all_groups")
+androgens_f_orx_df <- data.frame(gene = regulated_by_androgens_F_ORX, source = "regulated_by_androgens_F_ORX")
+androgens_m_df <- data.frame(gene = regulated_by_androgens_M, source = "regulated_by_androgens_M")
+sex_f_df <- data.frame(gene = regulated_by_sex_f, source = "regulated_by_sex_f")
+sex_m_orx_df <- data.frame(gene = regulated_by_sex_M_ORX, source = "regulated_by_sex_M_ORX")
+
+# Combine the dataframes into one long-form dataframe
+genes_df <- rbind(shared_df, androgens_f_orx_df, androgens_m_df, sex_f_df, sex_m_orx_df) %>%
+  select(source, gene)
+
+# Run enrichment analysis
+enrichment_df_h <- BIGprofiler(gene_df = genes_df, ID = "SYMBOL", category = "H", subcategory = "", species = "mouse")
+enrichment_df_k <- BIGprofiler(gene_df = genes_df, ID = "SYMBOL", category = "C2", subcategory = "CP:KEGG", species = "mouse")
+
+# Combine enrichment results
+enrichment_df <- rbind(enrichment_df_h, enrichment_df_k)
+
+```
+
+```{r Print out the pathways of interest to look at the results}
+
+enrichment_df_selected <- enrichment_df  %>% dplyr::filter(pathway %in% pathways_of_interest) %>% select(group, pathway, group_in_pathway, genes)
+
+# Print each pathway's genes in full
+for (i in seq_len(nrow(enrichment_df_selected))) {
+  cat("Group:", enrichment_df_selected$group[i], 
+      "\nPathway:", enrichment_df_selected$pathway[i], 
+      "\nGenes:", paste(enrichment_df_selected$genes[[i]], collapse = ", "), 
+      "\n\n")
+}
+
+```
+
+Okay we have found interesting genes with varying expression based on biological. As we know, the ORX groups looks kind of weird. I honestly think that is because the baseline was taken from a different mouse timepoint and is not ideal here. 
+
+HALLMARK_INTERFERON_GAMMA_RESPONSE Pulled out the genes I really cared about
+
+###### Done with this part ######
+
+###################### PART II #########################
+
+Let's create a graph for the paper
+
+Create a heatmap of these genes? Z transformed maybe?
+
+```{r}
+
+library(ComplexHeatmap)
+library(msigdbr)
+library(dplyr)
+library(tidyr)
+library(circlize)
+library(RColorBrewer)
+
+# Set parameters
+FDR_cutoff <- 0.05
+LogFC_cutoff <- 0
+pathway <- "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+path_label <- "Interferon gamma response"
+
+# Filter for differentially expressed genes (DEGs)
+upset <- contrast_DE %>%
+  mutate(DEG = ifelse(padj < FDR_cutoff & abs(log2FoldChange) >= LogFC_cutoff, 1, 0)) %>%
+  filter(contrast_name %in% c("F_schizont_vs_F_mock", "M_schizont_vs_M_mock", "ORX_schizont_vs_ORX_mock"))
+
+# Pull specified pathway genes
+msig_df <- msigdbr(species = "Mus musculus", category = "H") %>%
+  select(gs_name, gene_symbol) %>%
+  rename(gene = gene_symbol) %>%
+  filter(gs_name == pathway) %>%
+  rename(pathway_name = gs_name)
+
+
+# Filter for DEGs present in the pathway
+DEG_list <- unique(upset$gene[upset$DEG == 1])
+
+# Pick how to filter
+upset_filter <- upset %>% filter(gene %in% c(regulated_by_sex_f))
+
+#upset_filter <- upset %>% filter(gene %in% DEG_list)
+
+pathway_df <- inner_join(upset_filter, msig_df, by = "gene")
+
+# Create heatmap matrix of LogFC values
+heatmap_df <- pathway_df %>%
+  select(log2FoldChange, contrast_name, gene, pathway_name) %>%
+  mutate(log2FoldChange = as.numeric(log2FoldChange))
+
+heatmap_matrix <- heatmap_df %>%
+  dplyr::filter(gene != "H2-Q10") %>%
+  pivot_wider(names_from = "contrast_name", values_from = "log2FoldChange") %>%
+  column_to_rownames(var = "gene") %>%
+  filter(pathway_name == pathway)
+
+# Create annotations for the heatmap
+col_pheno <- pathway_df %>%
+  select(contrast_name) %>%
+  distinct() 
+
+column_ha <- HeatmapAnnotation(
+  contrast = col_pheno$contrast_name,
+  col = list(contrast = c(
+    "F_schizont_vs_F_mock" = "#941751",
+    "M_schizont_vs_M_mock" = "#005493",
+    "ORX_schizont_vs_ORX_mock" = "#52B2BF"
+  )),
+  border = TRUE
+)
+
+# Add row annotations
+row_ht <- rowAnnotation(Hallmark1 = anno_block(
+  gp = gpar(col = "black"),
+  labels = path_label,
+  labels_gp = gpar(col = "black", fontsize = 12)
+))
+
+# Define color function for the heatmap
+col_fun <- colorRamp2(c(-.8, -0.4, 0, 0.4,.8), rev(brewer.pal(n = 5, name = "RdYlBu")))
+
+# Convert the heatmap matrix to numeric, replacing NAs with 0
+heatmap_final <- heatmap_matrix[2:4]
+heatmap_final[is.na(heatmap_final)] <- 0
+
+# Create the heatmap
+ht1 <- Heatmap(heatmap_final, 
+               name = "LogFC",
+               col = col_fun,
+               show_column_dend = FALSE,
+               show_row_dend = FALSE,
+               show_row_names = TRUE,
+               show_column_names = FALSE,
+               top_annotation = column_ha,
+               left_annotation = row_ht,
+               cluster_columns = FALSE,
+               show_heatmap_legend = TRUE)
+
+# Save the heatmap to a PNG file
+png(file = paste0("figs/pathway_heatmaps/Heatmap_pvalue_contrast_model", FDR_cutoff, "_LogFC_", LogFC_cutoff, "_", pathway, ".png"),
+    width = 6, height = 6, units = "in", res = 300)
+draw(ht1)
+dev.off()
+```
+
+######## PART 4 ###############
+ This is for paper - pull the interaction terms and see if any genes are different between F & ORX.
+ 
+ #pulling out only up regulated genes.
+ 
+```{r}
+
+
+padj_value = 0.05
+logfold_value = 1
+
+contrast_DE_mock <- interaction_DE %>% dplyr::filter(contrast %in% c("Group_F_vs_M","Group_ORX_vs_M"))
+
+upset_data <- contrast_DE_mock %>%
+  filter(padj < padj_value, log2FoldChange > logfold_value ) %>%  # Keep only significant genes
+  mutate(present = TRUE) %>%  # Mark presence
+  group_by(gene, contrast) %>%  # Group by gene and contrast
+  summarise(present = max(present), .groups = 'drop') %>%  # Ensure presence is logical
+  tidyr::pivot_wider(names_from = contrast, values_from = present, values_fill = list(present = FALSE)) %>%
+  column_to_rownames("gene")
+
+
+# Create UpSet plot
+UpSetR::upset(upset_data, sets = colnames(upset_data), keep.order = TRUE)
+
+
+# Extract intersecting genes from the dataframe
+intersecting_genes <- upset_data %>%
+  filter(Group_F_vs_M & !Group_ORX_vs_M) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes unique to F vs M, but not ORX:", paste(intersecting_genes, collapse = ", ")))
+
+FvsM <- intersecting_genes 
+
+intersecting_genes <- upset_data %>%
+  filter(!Group_F_vs_M & Group_ORX_vs_M) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes unique to ORX vs M, but not F:", paste(intersecting_genes, collapse = ", ")))
+
+ORXvsM <- intersecting_genes 
+
+intersecting_genes <- upset_data %>%
+  filter(Group_F_vs_M & Group_ORX_vs_M) %>%  # Filter conditions
+  rownames() 
+
+# Print the intersecting genes with a message
+print(paste("These are genes shared ORX vs M vs F:", paste(intersecting_genes, collapse = ", ")))
+
+Shared <- intersecting_genes 
+
+```
+
+Next step is to identify which DE genes are in these pathway - question though - is this just an enrichment analysis?
+Okay this is enrichment for for each contrast & shared output. 
+```{r}
+
+
+# Create a dataframe to do enrichment on the genes of interest I pulled out. 
+
+# Create dataframes for each set of genes
+FvsM_df <- data.frame(gene = FvsM , source = "FvsM")
+ORXvsM_df  <- data.frame(gene = ORXvsM, source = "ORXvsM")
+Shared_df  <- data.frame(gene = Shared, source = "Shared")
+
+# Combine the two dataframes into one long-form dataframe
+genes_df <- rbind(FvsM_df, ORXvsM_df, Shared_df) %>% select(source, gene)
+
+enrichment_df_h <- BIGprofiler(gene_df=genes_df, ID="SYMBOL", category="H", species = "mouse")
+enrichment_df_k <- BIGprofiler(gene_df=genes_df, ID="SYMBOL", category="C2", subcategory = "CP:KEGG", species = "mouse")
+
+enrichment_df <- rbind(enrichment_df_h, enrichment_df_k)
+
+```
+
+```{r Print out the pathways of interest to look at the results}
+
+pathways_of_interest <- c(# hormones
+                          "KEGG_STEROID_HORMONE_BIOSYNTHESIS",
+                          "HALLMARK_ANDROGEN_RESPONSE",
+                          "HALLMARK_ESTROGEN_RESPONSE_LATE",
+                          "HALLMARK_ESTROGEN_RESPONSE_EARLY",
+                          # Metabolism
+                          "HALLMARK_FATTY_ACID_METABOLISM",
+                          "HALLMARK_CHOLESTEROL_HOMEOSTASIS",
+                          "HALLMARK_MTORC1_SIGNALING",
+                          "HALLMARK_XENOBIOTIC_METABOLISM",
+                          #Inflammation
+                          "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+                          "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+                          "HALLMARK_INFLAMMATORY_RESPONSE",
+                          "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+                          #downregulated
+                          "HALLMARK_BILE_ACID_METABOLISM",
+                          "KEGG_COMPLEMENT_AND_COAGULATION_CASCADES",
+                          "KEGG_STEROID_HORMONE_BIOSYNTHESIS"
+                          )
+
+
+enrichment_df_selected <- enrichment_df  %>% dplyr::filter(pathway %in% pathways_of_interest) %>% select(group, pathway, group_in_pathway, genes)
+
+# Print each pathway's genes in full
+for (i in seq_len(nrow(enrichment_df_selected))) {
+  cat("Group:", enrichment_df_selected$group[i], 
+      "\nPathway:", enrichment_df_selected$pathway[i], 
+      "\nGenes:", paste(enrichment_df_selected$genes[[i]], collapse = ", "), 
+      "\n\n")
+}
+
+```
